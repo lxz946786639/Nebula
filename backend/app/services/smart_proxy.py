@@ -49,8 +49,11 @@ SCENARIO_CHECKS = {
     "streaming": ("netflix", "https://www.netflix.com/title/80018499"),
 }
 RUNTIME_NODE_ID_RE = re.compile(r"^node-(\d+)\b")
+TRAFFIC_RUNTIME_RELOAD_COOLDOWN = timedelta(minutes=5)
 _core_traffic_sample: tuple[datetime, int, int] | None = None
 _proxy_traffic_samples: dict[int, tuple[datetime, int, int]] = {}
+_last_traffic_runtime_reload_at: datetime | None = None
+_pending_traffic_runtime_reload = False
 
 
 @dataclass(slots=True)
@@ -64,6 +67,7 @@ class RuntimeApplyResult:
     reloaded: bool = False
     error: str | None = None
     content: str | None = None
+    content_changed: bool = True
 
 
 class SmartProxyError(ValueError):
@@ -114,6 +118,9 @@ class TrafficRuntimeReconcileResult:
     online_nodes: int = 0
     failed_nodes: int = 0
     applied: bool = False
+    content_changed: bool = False
+    cooldown_active: bool = False
+    pending_reload: bool = False
     reason: str | None = None
     error: str | None = None
 
@@ -635,6 +642,92 @@ async def _smart_proxy_nodes_for_subscriptions(
     return list(nodes_by_id.values()), proxy_names
 
 
+def _traffic_runtime_reload_cooldown_remaining(now: datetime) -> timedelta | None:
+    if _last_traffic_runtime_reload_at is None:
+        return None
+    elapsed = now - _last_traffic_runtime_reload_at
+    if elapsed >= TRAFFIC_RUNTIME_RELOAD_COOLDOWN:
+        return None
+    return TRAFFIC_RUNTIME_RELOAD_COOLDOWN - elapsed
+
+
+def _mark_pending_traffic_runtime_reload() -> None:
+    global _pending_traffic_runtime_reload
+    _pending_traffic_runtime_reload = True
+
+
+def _clear_pending_traffic_runtime_reload() -> None:
+    global _pending_traffic_runtime_reload
+    _pending_traffic_runtime_reload = False
+
+
+def _mark_traffic_runtime_reload_attempt(now: datetime) -> None:
+    global _last_traffic_runtime_reload_at
+    _last_traffic_runtime_reload_at = now
+
+
+async def _auto_apply_changed_mihomo_runtime(
+    session: AsyncSession,
+    *,
+    actor: str,
+    reason_parts: list[str],
+    changed_subscriptions: int,
+    checked_nodes: int,
+    online_nodes: int,
+    failed_nodes: int,
+    proxy_names: set[str],
+) -> TrafficRuntimeReconcileResult:
+    result, content_changed = await apply_mihomo_runtime_if_changed(session, reload_core=True)
+    if not content_changed:
+        _clear_pending_traffic_runtime_reload()
+        return TrafficRuntimeReconcileResult(
+            changed_subscriptions=changed_subscriptions,
+            checked_nodes=checked_nodes,
+            online_nodes=online_nodes,
+            failed_nodes=failed_nodes,
+            content_changed=False,
+            reason="runtime content unchanged",
+        )
+
+    now = now_china()
+    _mark_traffic_runtime_reload_attempt(now)
+    _clear_pending_traffic_runtime_reload()
+    scope_text = (
+        f"影响订阅 {changed_subscriptions} 个，"
+        f"检测节点 {checked_nodes} 个，在线 {online_nodes} 个，失败 {failed_nodes} 个，"
+        f"影响智能代理 {len(proxy_names)} 个"
+        + (f"（{ '、'.join(sorted(proxy_names)[:3]) }）" if proxy_names else "")
+        + "，"
+        if changed_subscriptions or checked_nodes or proxy_names
+        else "处理冷却期内累积变更，"
+    )
+    await write_audit(
+        session,
+        actor=actor,
+        action="reload",
+        resource="smart_proxy",
+        detail=(
+            "订阅流量状态变化后自动重新应用 Mihomo runtime："
+            f"触发原因 {'、'.join(reason_parts)}，"
+            f"{scope_text}"
+            + f"核心重载{'成功' if result.reloaded else '未完成'}"
+            + (f"，错误：{result.error}" if result.error else "")
+            + "。"
+        ),
+    )
+    await session.commit()
+    return TrafficRuntimeReconcileResult(
+        changed_subscriptions=changed_subscriptions,
+        checked_nodes=checked_nodes,
+        online_nodes=online_nodes,
+        failed_nodes=failed_nodes,
+        applied=True,
+        content_changed=True,
+        reason="; ".join(reason_parts),
+        error=result.error,
+    )
+
+
 async def reconcile_smart_proxy_runtime_after_traffic_change(
     session: AsyncSession,
     previous_snapshot: TrafficSnapshot | None,
@@ -642,6 +735,7 @@ async def reconcile_smart_proxy_runtime_after_traffic_change(
     *,
     actor: str = "system",
 ) -> TrafficRuntimeReconcileResult:
+    global _pending_traffic_runtime_reload
     policy = await smart_proxy_traffic_policy(session)
     if not policy.traffic_guard_enabled:
         return TrafficRuntimeReconcileResult(reason="traffic guard disabled")
@@ -661,6 +755,24 @@ async def reconcile_smart_proxy_runtime_after_traffic_change(
         if previous_reasons.get(subscription_id) != current_reasons.get(subscription_id)
     }
     if not changed_subscription_ids:
+        if _pending_traffic_runtime_reload:
+            remaining = _traffic_runtime_reload_cooldown_remaining(now)
+            if remaining is not None:
+                return TrafficRuntimeReconcileResult(
+                    cooldown_active=True,
+                    pending_reload=True,
+                    reason=f"runtime reload cooldown active, {round(remaining.total_seconds())}s remaining",
+                )
+            return await _auto_apply_changed_mihomo_runtime(
+                session,
+                actor=actor,
+                reason_parts=["冷却结束后补充应用待处理变更"],
+                changed_subscriptions=0,
+                checked_nodes=0,
+                online_nodes=0,
+                failed_nodes=0,
+                proxy_names=set(),
+            )
         return TrafficRuntimeReconcileResult(reason="no blocking traffic state change")
 
     affected_nodes, proxy_names = await _smart_proxy_nodes_for_subscriptions(session, changed_subscription_ids)
@@ -695,38 +807,34 @@ async def reconcile_smart_proxy_runtime_after_traffic_change(
             reason="checked nodes did not require runtime reload",
         )
 
-    result = await apply_mihomo_runtime(session, reload_core=True)
     reason_parts: list[str] = []
     if blocked_and_failed:
         reason_parts.append("到期/耗尽订阅节点不可用")
     if restored_and_online:
         reason_parts.append("订阅恢复且节点可用")
-    await write_audit(
+    remaining = _traffic_runtime_reload_cooldown_remaining(now)
+    if remaining is not None:
+        _mark_pending_traffic_runtime_reload()
+        await session.commit()
+        return TrafficRuntimeReconcileResult(
+            changed_subscriptions=len(changed_subscription_ids),
+            checked_nodes=check.tested_nodes,
+            online_nodes=check.online_nodes,
+            failed_nodes=check.failed_nodes,
+            cooldown_active=True,
+            pending_reload=True,
+            reason=f"runtime reload cooldown active, {round(remaining.total_seconds())}s remaining",
+        )
+
+    return await _auto_apply_changed_mihomo_runtime(
         session,
         actor=actor,
-        action="reload",
-        resource="smart_proxy",
-        detail=(
-            "订阅流量状态变化后自动重新应用 Mihomo runtime："
-            f"触发原因 {'、'.join(reason_parts)}，"
-            f"影响订阅 {len(changed_subscription_ids)} 个，"
-            f"检测节点 {check.tested_nodes} 个，在线 {check.online_nodes} 个，失败 {check.failed_nodes} 个，"
-            f"影响智能代理 {len(proxy_names)} 个"
-            + (f"（{ '、'.join(sorted(proxy_names)[:3]) }）" if proxy_names else "")
-            + f"，核心重载{'成功' if result.reloaded else '未完成'}"
-            + (f"，错误：{result.error}" if result.error else "")
-            + "。"
-        ),
-    )
-    await session.commit()
-    return TrafficRuntimeReconcileResult(
+        reason_parts=reason_parts,
         changed_subscriptions=len(changed_subscription_ids),
         checked_nodes=check.tested_nodes,
         online_nodes=check.online_nodes,
         failed_nodes=check.failed_nodes,
-        applied=True,
-        reason="; ".join(reason_parts),
-        error=result.error,
+        proxy_names=proxy_names,
     )
 
 
@@ -860,19 +968,43 @@ async def write_mihomo_runtime_config(session: AsyncSession) -> RuntimeApplyResu
         return await _write_mihomo_runtime_config_unlocked(session)
 
 
-async def _write_mihomo_runtime_config_unlocked(session: AsyncSession) -> RuntimeApplyResult:
+async def _build_mihomo_runtime_content(session: AsyncSession) -> tuple[str, RuntimeApplyResult]:
     config, result = await build_mihomo_runtime_config(session)
     secret = await get_mihomo_api_secret(session)
     if secret:
         config["secret"] = secret
     content = dump_yaml_config(config)
-    path = Path(result.config_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists() or path.read_text(encoding="utf-8") != content:
-        tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-        tmp_path.write_text(content, encoding="utf-8")
-        os.replace(tmp_path, path)
     result.content = content
+    return content, result
+
+
+def _runtime_content_changed(path: Path, content: str) -> bool:
+    try:
+        return not path.exists() or path.read_text(encoding="utf-8") != content
+    except OSError:
+        return True
+
+
+def _write_runtime_content(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+async def _mark_enabled_proxies_applied(session: AsyncSession) -> None:
+    now = now_china()
+    proxies = list((await session.scalars(select(SmartProxy).where(SmartProxy.enabled.is_(True)))).all())
+    for proxy in proxies:
+        proxy.last_applied_at = now
+
+
+async def _write_mihomo_runtime_config_unlocked(session: AsyncSession) -> RuntimeApplyResult:
+    content, result = await _build_mihomo_runtime_content(session)
+    path = Path(result.config_path)
+    result.content_changed = _runtime_content_changed(path, content)
+    if result.content_changed:
+        _write_runtime_content(path, content)
     await session.commit()
     return result
 
@@ -902,18 +1034,30 @@ async def apply_mihomo_runtime(session: AsyncSession, *, reload_core: bool = Fal
             result.reloaded = reloaded
             result.error = error
             if reloaded:
-                now = now_china()
-                proxies = list(
-                    (
-                        await session.scalars(
-                            select(SmartProxy).where(SmartProxy.enabled.is_(True))
-                        )
-                    ).all()
-                )
-                for proxy in proxies:
-                    proxy.last_applied_at = now
+                await _mark_enabled_proxies_applied(session)
                 await session.commit()
         return result
+
+
+async def apply_mihomo_runtime_if_changed(session: AsyncSession, *, reload_core: bool = False) -> tuple[RuntimeApplyResult, bool]:
+    async with exclusive_lock("mihomo_runtime"):
+        content, result = await _build_mihomo_runtime_content(session)
+        path = Path(result.config_path)
+        result.content_changed = _runtime_content_changed(path, content)
+        if not result.content_changed:
+            await session.commit()
+            return result, False
+
+        _write_runtime_content(path, content)
+        if reload_core:
+            core_config_path = await get_mihomo_core_config_path(session)
+            reloaded, error = await reload_mihomo_config(session, core_config_path or result.config_path)
+            result.reloaded = reloaded
+            result.error = error
+            if reloaded:
+                await _mark_enabled_proxies_applied(session)
+        await session.commit()
+        return result, True
 
 
 async def apply_stability_priority_runtime(
