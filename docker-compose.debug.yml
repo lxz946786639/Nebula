@@ -1,0 +1,20 @@
+# 可选本机调试端口映射。
+# 默认 docker-compose.yml 不会把 Redis、subconverter、Mihomo API 暴露到宿主机。
+# 当你在宿主机直接运行后端，或需要用 curl/Postman 调试依赖服务时，再显式叠加本文件：
+#
+#   docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d redis subconverter mihomo
+#
+# 调试端口默认只绑定到 127.0.0.1，避免误暴露到局域网或公网。
+
+services:
+  redis:
+    ports:
+      - "${DEBUG_BIND_HOST:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+
+  subconverter:
+    ports:
+      - "${DEBUG_BIND_HOST:-127.0.0.1}:${SUBCONVERTER_PORT:-25500}:25500"
+
+  mihomo:
+    ports:
+      - "${DEBUG_BIND_HOST:-127.0.0.1}:${MIHOMO_API_PORT:-9090}:9090"

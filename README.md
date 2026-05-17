@@ -53,6 +53,7 @@ Nebula Subscriptions 是一个现代化代理订阅聚合与运行编排平台�
 │   ├── src/layouts/           # 应用布局
 │   └── src/composables/       # 主题和状态 WebSocket
 ├── docker-compose.yml
+├── docker-compose.debug.yml
 ├── .env.example
 ├── README.md
 └── 使用说明文档.md
@@ -72,8 +73,7 @@ docker compose up -d --build
 | Web 管理后台 | `http://localhost:8088` |
 | 后端 API 文档 | `http://localhost:8000/docs` |
 | 后端健康检查 | `http://localhost:8000/health` |
-| subconverter | `http://localhost:25500` |
-| Mihomo API | `http://localhost:9090/version` |
+| Redis / subconverter / Mihomo API | 默认不暴露到宿主机，仅 Docker 内网访问 |
 
 开发/本地测试默认管理员：
 
@@ -94,9 +94,15 @@ SUBSCRIPTION_TOKEN=your-random-subscription-token
 
 Docker Compose 默认使用 `TZ=Asia/Shanghai`，后端业务时间、调度器和容器系统时区均按中国时区运行。
 
-Docker Compose 默认只把前端、后端、Redis、subconverter、Mihomo API 和智能代理端口绑定到 `127.0.0.1`。如果需要局域网访问管理后台或代理端口，请显式设置 `FRONTEND_BIND_HOST=0.0.0.0` 或 `SMART_PROXY_BIND_HOST=0.0.0.0`，并配置强密码、Token 和防火墙。
+Docker Compose 默认只映射前端、后端 API 和智能代理端口；Redis、subconverter、Mihomo API 不暴露到宿主机，后端通过 Docker 内网 `redis:6379`、`subconverter:25500`、`mihomo:9090` 访问它们。如果需要局域网访问管理后台或代理端口，请显式设置 `FRONTEND_BIND_HOST=0.0.0.0` 或 `SMART_PROXY_BIND_HOST=0.0.0.0`，并配置强密码、Token 和防火墙。
 
 智能代理端口默认映射 `37890-37900`，由 `SMART_PROXY_PORT_START` 和 `SMART_PROXY_PORT_END` 控制。
+
+本机调试依赖服务时，可显式叠加调试端口映射：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d redis subconverter mihomo
+```
 
 ## 公开订阅接口
 
@@ -163,7 +169,7 @@ MIHOMO_CORE_CONFIG_PATH=/root/.config/mihomo/mihomo-runtime.yaml
 MIHOMO_API_URL=http://mihomo:9090
 ```
 
-宿主机本地开发的典型路径是：
+宿主机本地开发需要叠加 `docker-compose.debug.yml` 暴露 Mihomo API，典型路径是：
 
 ```env
 MIHOMO_RUNTIME_CONFIG_PATH=./data/mihomo-runtime.yaml
@@ -228,11 +234,12 @@ MIHOMO_API_URL=http://127.0.0.1:9090
 | `MIHOMO_API_SECRET` | 空 | Mihomo API Bearer Token |
 | `MIHOMO_RUNTIME_CONFIG_PATH` | Docker: `/app/data/mihomo-runtime.yaml` | Nebula 写入 runtime YAML 的路径 |
 | `MIHOMO_CORE_CONFIG_PATH` | Docker: `/root/.config/mihomo/mihomo-runtime.yaml` | Mihomo 进程/容器内看到的同一配置路径 |
-| `INTERNAL_BIND_HOST` | `127.0.0.1` | Redis、subconverter、Mihomo API、后端 API 暴露到宿主机的绑定地址 |
+| `INTERNAL_BIND_HOST` | `127.0.0.1` | 后端 API 暴露到宿主机的绑定地址 |
 | `FRONTEND_BIND_HOST` | `127.0.0.1` | 前端管理后台暴露到宿主机的绑定地址 |
 | `BACKEND_PORT` | `8000` | 后端 API 暴露端口 |
-| `SUBCONVERTER_PORT` | `25500` | subconverter 暴露端口 |
-| `MIHOMO_API_PORT` | `9090` | Mihomo API 暴露端口 |
+| `DEBUG_BIND_HOST` | `127.0.0.1` | 仅启用 `docker-compose.debug.yml` 时使用，控制调试端口绑定地址 |
+| `SUBCONVERTER_PORT` | `25500` | 仅启用 `docker-compose.debug.yml` 时使用，subconverter 暴露端口 |
+| `MIHOMO_API_PORT` | `9090` | 仅启用 `docker-compose.debug.yml` 时使用，Mihomo API 暴露端口 |
 | `SMART_PROXY_PORT_START` | `37890` | 智能代理自动分配端口起点 |
 | `SMART_PROXY_PORT_END` | `37900` | 智能代理自动分配端口终点 |
 | `SMART_PROXY_BIND_HOST` | `127.0.0.1` | 智能代理端口暴露到宿主机的绑定地址 |
@@ -245,7 +252,7 @@ MIHOMO_API_URL=http://127.0.0.1:9090
 | `SMART_PROXY_EXCLUDE_UNKNOWN_TRAFFIC` | `false` | 是否排除没有流量响应头的订阅节点 |
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:8088` | 允许跨域来源，逗号分隔 |
 | `FRONTEND_PORT` | `8088` | 前端容器暴露端口 |
-| `REDIS_PORT` | `6379` | Redis 暴露到宿主机的端口 |
+| `REDIS_PORT` | `6379` | 仅启用 `docker-compose.debug.yml` 时使用，Redis 暴露到宿主机的端口 |
 | `URL_BLOCK_PRIVATE_NETWORKS` | `true` | 是否阻止私网/回环/保留订阅地址 |
 | `URL_ALLOWLIST` | 空 | 允许的订阅域名，逗号分隔；为空表示不限制域名 |
 | `RATE_LIMIT_REQUESTS` | `180` | 限流窗口内最大请求数 |
@@ -260,7 +267,7 @@ MIHOMO_API_URL=http://127.0.0.1:9090
 Copy-Item backend\.env.development.example backend\.env.development
 ```
 
-[backend/.env.development.example](D:/AppData/Nebula/backend/.env.development.example:1) 默认适配本项目 Compose Redis、subconverter 和 Mihomo：
+[backend/.env.development.example](D:/AppData/Nebula/backend/.env.development.example:1) 默认适配宿主机后端通过 `127.0.0.1` 调用 Compose 依赖服务的场景：
 
 ```env
 APP_ENV=development
@@ -281,8 +288,10 @@ REDIS_URL=redis://:your-password@127.0.0.1:6379/0
 启动依赖：
 
 ```bash
-docker compose up -d redis subconverter mihomo
+docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d redis subconverter mihomo
 ```
+
+默认 `docker compose up -d` 不会把 Redis、subconverter、Mihomo API 暴露到宿主机；只有叠加 `docker-compose.debug.yml` 后，宿主机后端才可以访问 `127.0.0.1:6379`、`127.0.0.1:25500`、`127.0.0.1:9090`。
 
 启动后端：
 
