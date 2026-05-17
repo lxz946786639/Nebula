@@ -41,10 +41,10 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="到期时间" width="130">
-        <template #default="{ row }">{{ formatDate(row.traffic_expire_at) }}</template>
+      <el-table-column label="到期时间" width="180">
+        <template #default="{ row }">{{ formatDateTime(row.traffic_expire_at) }}</template>
       </el-table-column>
-      <el-table-column label="最近更新时间" width="170">
+      <el-table-column label="最近更新时间" width="180">
         <template #default="{ row }">{{ formatDateTime(row.last_updated_at) }}</template>
       </el-table-column>
       <el-table-column label="操作" width="220" fixed="right">
@@ -102,6 +102,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 
 import http from '@/api/http'
+import { formatDateTime } from '@/utils/datetime'
 
 interface Subscription {
   id: number
@@ -309,16 +310,6 @@ function formatBytes(value?: number) {
 function trafficPercent(row: Subscription) {
   if (!row.traffic_total) return 0
   return Math.min(100, Math.round((row.traffic_used / row.traffic_total) * 100))
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return '-'
-  return new Date(value).toLocaleDateString()
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
 }
 
 onMounted(load)

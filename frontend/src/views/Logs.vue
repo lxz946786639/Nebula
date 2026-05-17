@@ -8,10 +8,11 @@
         <el-date-picker
           v-model="filters.range"
           type="datetimerange"
+          :format="DATE_TIME_PICKER_FORMAT"
+          :value-format="DATE_TIME_PICKER_FORMAT"
           start-placeholder="开始时间"
           end-placeholder="结束时间"
           range-separator="至"
-          value-format="YYYY-MM-DDTHH:mm:ss"
           style="width: 380px"
           @change="resetAndLoad"
         />
@@ -21,7 +22,9 @@
 
     <div class="logs-table-wrap">
       <el-table v-loading="loading" class="list-table" :data="items" stripe height="100%" empty-text="暂无日志">
-        <el-table-column prop="created_at_text" label="时间" width="170" />
+        <el-table-column label="时间" width="180">
+          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
+        </el-table-column>
         <el-table-column label="类型" width="130">
           <template #default="{ row }">
             <el-tag effect="plain">{{ row.type_label }}</el-tag>
@@ -54,6 +57,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { onMounted, reactive, ref } from 'vue'
 
 import http from '@/api/http'
+import { DATE_TIME_PICKER_FORMAT, formatDateTime } from '@/utils/datetime'
 
 interface LogTypeOption {
   value: string

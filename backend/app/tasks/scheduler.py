@@ -1,10 +1,11 @@
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
+from app.core.timezone import CHINA_TZ, as_china, now_china
 from app.models.subscription import Subscription
 from app.services.aggregator import convert_subscription, refresh_subscription_source
 from app.services.audit import write_audit
@@ -20,14 +21,14 @@ from app.services.traffic import latest_traffic_snapshot, poll_traffic_snapshot
 
 
 logger = logging.getLogger(__name__)
-scheduler = AsyncIOScheduler(timezone="UTC")
+scheduler = AsyncIOScheduler(timezone=CHINA_TZ)
 last_node_pool_sync_at: datetime | None = None
 last_smart_proxy_apply_at: datetime | None = None
 last_smart_proxy_monitor_at: datetime | None = None
 
 
-def _as_utc(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
+def _as_china(value: datetime) -> datetime:
+    return as_china(value) or value
 
 
 async def refresh_enabled_subscriptions() -> None:
@@ -72,7 +73,7 @@ async def sync_node_pool_by_setting() -> None:
         interval_minutes = await get_node_pool_sync_interval_minutes(session)
         if interval_minutes <= 0:
             return
-        now = datetime.now(UTC)
+        now = now_china()
         if last_node_pool_sync_at and now - last_node_pool_sync_at < timedelta(minutes=interval_minutes):
             return
         try:
@@ -87,9 +88,9 @@ async def poll_traffic_by_setting() -> None:
         interval_minutes = await get_traffic_poll_interval_minutes(session)
         if interval_minutes <= 0:
             return
-        now = datetime.now(UTC)
+        now = now_china()
         latest = await latest_traffic_snapshot(session)
-        if latest and latest.created_at and now - _as_utc(latest.created_at) < timedelta(minutes=interval_minutes):
+        if latest and latest.created_at and now - _as_china(latest.created_at) < timedelta(minutes=interval_minutes):
             return
         try:
             snapshot = await poll_traffic_snapshot(session)
@@ -112,7 +113,7 @@ async def apply_smart_proxy_by_setting() -> None:
         interval_minutes = await get_smart_proxy_auto_apply_interval_minutes(session)
         if interval_minutes <= 0:
             return
-        now = datetime.now(UTC)
+        now = now_china()
         if last_smart_proxy_apply_at and now - last_smart_proxy_apply_at < timedelta(minutes=interval_minutes):
             return
         try:
@@ -141,7 +142,7 @@ async def monitor_smart_proxy_by_setting() -> None:
         interval_minutes = await get_smart_proxy_monitor_interval_minutes(session)
         if interval_minutes <= 0:
             return
-        now = datetime.now(UTC)
+        now = now_china()
         if last_smart_proxy_monitor_at and now - last_smart_proxy_monitor_at < timedelta(minutes=interval_minutes):
             return
         try:

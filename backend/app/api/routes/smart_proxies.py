@@ -1,10 +1,11 @@
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from ipaddress import ip_network
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.core.timezone import as_china, now_china
 from app.models.node import Node
 from app.models.smart_proxy import SmartProxy
 from app.models.smart_proxy_health import SmartProxyHealthLog
@@ -158,20 +159,16 @@ SMART_PROXY_PRESETS = [
 APPLY_STATUS_TOLERANCE = timedelta(seconds=2)
 
 
-def _utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+def _china(value: datetime | None) -> datetime | None:
+    return as_china(value)
 
 
 def _mark_config_changed(proxy: SmartProxy) -> None:
-    proxy.config_updated_at = datetime.now(UTC)
+    proxy.config_updated_at = now_china()
 
 
 async def _mark_all_configs_changed(session: SessionDep) -> None:
-    now = datetime.now(UTC)
+    now = now_china()
     proxies = list((await session.scalars(select(SmartProxy))).all())
     for proxy in proxies:
         proxy.config_updated_at = now
@@ -181,8 +178,8 @@ def _apply_status(proxy: SmartProxy) -> tuple[str, str | None]:
     if not proxy.enabled:
         return "disabled", "代理未启用，不会出现在 Mihomo 运行配置中。"
 
-    config_updated_at = _utc(proxy.config_updated_at) or _utc(proxy.updated_at) or _utc(proxy.created_at)
-    last_applied_at = _utc(proxy.last_applied_at)
+    config_updated_at = _china(proxy.config_updated_at) or _china(proxy.updated_at) or _china(proxy.created_at)
+    last_applied_at = _china(proxy.last_applied_at)
     if last_applied_at is None:
         return "pending", "尚未应用到 Mihomo，请点击顶部“重新应用到 Mihomo”。"
     if config_updated_at and last_applied_at + APPLY_STATUS_TOLERANCE < config_updated_at:
@@ -395,7 +392,7 @@ async def create_smart_proxy(
     except SmartProxyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await ensure_unique_port(session, int(data["port"]))
-    proxy = SmartProxy(**data, status="stopped", config_updated_at=datetime.now(UTC))
+    proxy = SmartProxy(**data, status="stopped", config_updated_at=now_china())
     session.add(proxy)
     await write_audit(
         session,

@@ -1,10 +1,11 @@
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import get_settings
+from app.core.timezone import now_china
 
 
 settings = get_settings()
@@ -20,7 +21,7 @@ def get_password_hash(password: str) -> str:
 
 
 def create_token(subject: str, expires_minutes: int, token_type: str = "access", extra: dict[str, Any] | None = None) -> str:
-    expire = datetime.now(UTC) + timedelta(minutes=expires_minutes)
+    expire = now_china() + timedelta(minutes=expires_minutes)
     payload: dict[str, Any] = {"sub": subject, "exp": expire, "type": token_type}
     if extra:
         payload.update(extra)

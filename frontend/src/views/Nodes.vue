@@ -56,8 +56,8 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="更新时间" width="170">
-        <template #default="{ row }">{{ formatTime(row.last_seen_at) }}</template>
+      <el-table-column label="更新时间" width="180">
+        <template #default="{ row }">{{ formatDateTime(row.last_seen_at) }}</template>
       </el-table-column>
       <el-table-column label="YAML" width="90">
         <template #default="{ row }">
@@ -91,6 +91,7 @@ import { ElMessage } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 
 import http from '@/api/http'
+import { formatDateTime } from '@/utils/datetime'
 
 interface NodeItem {
   id: number
@@ -241,10 +242,6 @@ async function updateEnabled(row: NodeItem) {
     row.enabled = !enabled
     ElMessage.error('更新节点状态失败')
   }
-}
-
-function formatTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString() : '-'
 }
 
 function latencyTag(value: number) {

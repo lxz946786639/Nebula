@@ -4,6 +4,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import desc, func, select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.core.timezone import as_china
 from app.models.audit import AuditLog
 from app.schemas.audit import AuditLogPage, AuditLogRead, AuditLogType
 
@@ -57,7 +58,8 @@ def _action_label(action: str) -> str:
 
 
 def _format_datetime(value: datetime) -> str:
-    return value.strftime("%Y-%m-%d %H:%M:%S")
+    china_value = as_china(value)
+    return (china_value or value).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _has_chinese_text(value: str) -> bool:

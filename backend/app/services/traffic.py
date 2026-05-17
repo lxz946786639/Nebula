@@ -1,11 +1,12 @@
 import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 
 import aiohttp
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import CHINA_TZ
 from app.models.subscription import Subscription
 from app.models.traffic_snapshot import TrafficSnapshot
 from app.utils.network import validate_subscription_url
@@ -48,7 +49,7 @@ def parse_subscription_userinfo(value: str | None) -> tuple[int, int, int, str |
     total = int(parts.get("total") or 0)
     expire_at = None
     if parts.get("expire"):
-        expire_at = datetime.fromtimestamp(int(parts["expire"]), tz=UTC).isoformat()
+        expire_at = datetime.fromtimestamp(int(parts["expire"]), tz=CHINA_TZ).isoformat()
     return upload, download, total, expire_at
 
 

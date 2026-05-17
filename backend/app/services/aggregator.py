@@ -1,10 +1,10 @@
 import hashlib
-from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_get_json, cache_get_text, cache_set_json, cache_set_text
+from app.core.timezone import now_china
 from app.models.config_template import ConfigTemplate
 from app.models.node_snapshot import NodeSnapshot
 from app.models.subscription import Subscription
@@ -102,7 +102,7 @@ async def refresh_subscription_source(
         await validate_subscription_url(subscription.url)
         subscription.last_status = "disabled"
         subscription.last_error = None
-        subscription.last_updated_at = datetime.now(UTC)
+        subscription.last_updated_at = now_china()
         await session.commit()
         return
     result = await sync_node_pool(

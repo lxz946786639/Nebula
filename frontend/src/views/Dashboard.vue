@@ -43,7 +43,7 @@
       </div>
       <div class="stat-card">
         <span>最近到期</span>
-        <strong class="compact-stat">{{ formatDate(stats.traffic.expire_at) }}</strong>
+        <strong class="compact-stat">{{ formatDateTime(stats.traffic.expire_at) }}</strong>
       </div>
     </section>
 
@@ -63,7 +63,7 @@
             <el-tag :type="statusTag(stats.mihomo_status)">{{ statusText(stats.mihomo_status) }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="Mihomo 版本">{{ stats.mihomo_version || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="最近更新">{{ stats.last_updated_at || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="最近更新">{{ formatDateTime(stats.last_updated_at) }}</el-descriptions-item>
           <el-descriptions-item label="流量采集">{{ formatDateTime(stats.traffic.polled_at) }}</el-descriptions-item>
         </el-descriptions>
       </section>
@@ -112,6 +112,7 @@ import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 import http from '@/api/http'
 import { useStatusSocket } from '@/composables/useStatusSocket'
+import { formatDateTime } from '@/utils/datetime'
 
 interface ClientSubscription {
   label: string
@@ -187,16 +188,6 @@ function formatBytes(value: number) {
     index += 1
   }
   return `${size.toFixed(index === 0 ? 0 : 2)} ${units[index]}`
-}
-
-function formatDate(value: string | null) {
-  if (!value) return '-'
-  return new Date(value).toLocaleDateString()
-}
-
-function formatDateTime(value: string | null) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
 }
 
 function fullUrl(path: string) {

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-from ipaddress import ip_address, ip_network
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import BACKEND_DIR
+from app.core.timezone import as_china, now_china
 from app.models.node import Node
 from app.models.smart_proxy import SmartProxy
 from app.models.smart_proxy_health import SmartProxyHealthLog
@@ -277,7 +278,7 @@ def _parse_datetime(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return as_china(parsed)
 
 
 async def smart_proxy_traffic_policy(session: AsyncSession, proxy: SmartProxy | None = None) -> SmartProxyTrafficPolicy:
@@ -329,7 +330,7 @@ async def _traffic_state_map(
     low_remaining = policy.low_remaining_mb * 1024 * 1024
     expire_soon_days = policy.expire_soon_days
     exclude_unknown = policy.exclude_unknown_traffic
-    now = datetime.now(UTC)
+    now = now_china()
     soon_before = now + timedelta(days=expire_soon_days)
     states: dict[int, TrafficState] = {}
 
@@ -707,7 +708,7 @@ async def apply_mihomo_runtime(session: AsyncSession, *, reload_core: bool = Fal
         result.reloaded = reloaded
         result.error = error
         if reloaded:
-            now = datetime.now(UTC)
+            now = now_china()
             proxies = list(
                 (
                     await session.scalars(
@@ -778,7 +779,7 @@ async def mihomo_core_status(session: AsyncSession) -> dict[str, Any]:
         except MihomoApiError:
             connections_data = {}
         connections = connections_data.get("connections") if isinstance(connections_data, dict) else []
-        now = datetime.now(UTC)
+        now = now_china()
         upload_total = _safe_int(connections_data.get("uploadTotal")) if isinstance(connections_data, dict) else 0
         download_total = _safe_int(connections_data.get("downloadTotal")) if isinstance(connections_data, dict) else 0
         upload_speed, download_speed = _speed_from_sample(
@@ -953,7 +954,7 @@ async def smart_proxy_connection_stats(
             if not _source_allowed(source_ip, proxy.ip_whitelist):
                 stats.unauthorized_connections += 1
 
-    now = datetime.now(UTC)
+    now = now_china()
     payload: dict[int, dict[str, Any]] = {}
     for proxy in proxies:
         stats = stats_by_id[proxy.id]
@@ -1210,7 +1211,7 @@ async def check_smart_proxy_health(
     timeout_ms: int = 8000,
     include_scenario_checks: bool = True,
 ) -> dict[str, Any]:
-    checked_at = datetime.now(UTC)
+    checked_at = now_china()
     group_name = runtime_group_name(proxy)
     result: dict[str, Any] = {
         "proxy_id": proxy.id,

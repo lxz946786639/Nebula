@@ -726,7 +726,7 @@
 
   <el-dialog v-model="healthLogsVisible" title="最近检测日志" width="860px">
     <el-table :data="healthLogs" stripe max-height="460" empty-text="暂无检测日志">
-      <el-table-column prop="created_at" label="时间" width="170">
+      <el-table-column prop="created_at" label="时间" width="180">
         <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
       </el-table-column>
       <el-table-column label="检测项" width="110">
@@ -755,6 +755,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 import http from '@/api/http'
 import { useStatusSocket } from '@/composables/useStatusSocket'
+import { formatDateTime } from '@/utils/datetime'
 
 interface SmartProxy {
   id: number
@@ -2046,10 +2047,6 @@ async function loadHealthLogs(proxyId: number) {
 
 function formatDelay(value?: number | null) {
   return value === null || value === undefined ? '-' : `${value} ms`
-}
-
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString()
 }
 
 function formatBytes(value?: number | null) {

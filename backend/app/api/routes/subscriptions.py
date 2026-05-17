@@ -1,10 +1,9 @@
-from datetime import UTC, datetime
-
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, SessionDep
+from app.core.timezone import now_china
 from app.models.subscription import Subscription
 from app.models.traffic_snapshot import TrafficSnapshot
 from app.schemas.common import Message
@@ -52,7 +51,7 @@ def _mark_subscription_sync_state(item: Subscription) -> None:
     else:
         item.last_status = "disabled"
         item.last_error = None
-        item.last_updated_at = datetime.now(UTC)
+        item.last_updated_at = now_china()
 
 
 def _traffic_by_subscription(snapshot: TrafficSnapshot | None) -> dict[int, dict]:

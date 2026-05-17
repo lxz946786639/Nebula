@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from fnmatch import fnmatchcase
 from typing import Any
 
@@ -11,6 +11,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
+from app.core.timezone import now_china
 from app.models.node import Node
 from app.models.subscription import Subscription
 from app.services.audit import write_audit
@@ -245,7 +246,7 @@ async def sync_node_pool(
 
     client = SubconverterClient(await get_subconverter_url(session))
     filter_patterns = await get_node_filter_patterns(session)
-    now = datetime.now(UTC)
+    now = now_china()
     seen_identities: set[str] = set()
     staged_payloads: list[dict[str, Any]] = []
 

@@ -88,6 +88,8 @@ ADMIN_PASSWORD=your-strong-password
 SUBSCRIPTION_TOKEN=your-subscription-token
 ```
 
+Docker Compose 默认使用 `TZ=Asia/Shanghai`，后端业务时间、调度器和容器系统时区均按中国时区运行。
+
 智能代理端口默认映射 `30001-30999`，由 `SMART_PROXY_PORT_START` 和 `SMART_PROXY_PORT_END` 控制。
 
 ## 公开订阅接口
@@ -201,6 +203,7 @@ MIHOMO_API_URL=http://127.0.0.1:9090
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `APP_ENV` | `development` | 运行环境；Docker Compose 默认传入 `production` |
+| `TZ` | `Asia/Shanghai` | 容器系统时区；后端业务时间统一使用中国时区 |
 | `SECRET_KEY` | `change-me-in-production` | JWT 签名密钥 |
 | `ADMIN_USERNAME` | `admin` | 首次初始化管理员用户名 |
 | `ADMIN_PASSWORD` | `admin123456` | 首次初始化管理员密码 |
@@ -245,6 +248,7 @@ Copy-Item backend\.env.development.example backend\.env.development
 
 ```env
 APP_ENV=development
+TZ=Asia/Shanghai
 REDIS_URL=redis://127.0.0.1:6379/0
 SUBCONVERTER_URL=http://127.0.0.1:25500
 MIHOMO_API_URL=http://127.0.0.1:9090
@@ -317,6 +321,8 @@ alembic upgrade head
 ## 后台任务
 
 APScheduler 启动后每分钟检查一次配置，并按设置决定是否执行实际任务：
+
+后端调度器使用 `Asia/Shanghai`，模型默认时间、订阅刷新时间、流量快照时间、智能代理检测时间和 WebSocket 推送时间也按中国时区生成。
 
 | 任务 | 设置项 | 默认 |
 | --- | --- | --- |

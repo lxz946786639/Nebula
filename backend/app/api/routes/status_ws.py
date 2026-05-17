@@ -1,5 +1,4 @@
 import asyncio
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket
@@ -9,6 +8,7 @@ from sqlalchemy import func, select
 from app.core.cache import get_redis
 from app.core.database import AsyncSessionLocal
 from app.core.security import decode_token
+from app.core.timezone import now_china
 from app.models.node import Node
 from app.models.smart_proxy import SmartProxy
 from app.models.subscription import Subscription
@@ -142,7 +142,7 @@ async def _smart_proxies_payload() -> dict[str, Any]:
 async def _status_payload(topics: set[str]) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "type": "status",
-        "sent_at": datetime.now(UTC).isoformat(),
+        "sent_at": now_china().isoformat(),
     }
     if "dashboard" in topics:
         payload["dashboard"] = await _dashboard_payload()
