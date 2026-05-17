@@ -527,10 +527,10 @@
         <el-form-item>
           <template #label>
             <span class="label-with-help">
-              定时重新应用到 Mihomo（分钟，0 表示关闭）
+              定时检查并按需应用到 Mihomo（分钟，0 表示关闭）
               <el-popover placement="top" width="360" trigger="hover">
                 <template #reference>
-                  <span class="help-icon" title="查看定时重新应用说明">?</span>
+                  <span class="help-icon" title="查看按需应用说明">?</span>
                 </template>
                 <div class="strategy-help">
                   <div class="strategy-help-item">
@@ -539,7 +539,7 @@
                   </div>
                   <div class="strategy-help-item">
                     <strong>开启后</strong>
-                    <span>系统会按间隔全局重新生成配置并热重载 Mihomo，可能让现有连接短暂中断或重建。</span>
+                    <span>系统会按间隔检查 runtime 内容，仅在配置发生变化时热重载 Mihomo。</span>
                   </div>
                   <div class="strategy-help-item">
                     <strong>适用场景</strong>
@@ -1460,7 +1460,7 @@ async function currentAutoApplyHint() {
     const data = await loadGlobalConfig()
     const minutes = Number(data.smart_proxy_auto_apply_interval_minutes || 0)
     if (minutes > 0) {
-      return `当前已开启定时重新应用到 Mihomo（${minutes} 分钟）。选择“仅保存”后不会立即热重载，但仍可能在下一次定时任务中生效。`
+      return `当前已开启定时检查并按需应用到 Mihomo（${minutes} 分钟）。选择“仅保存”后不会立即热重载，但配置变化仍可能在下一次定时检查中生效。`
     }
   } catch {
     // Ignore config read failures; the save flow can still continue.

@@ -121,13 +121,8 @@ interface SettingItem {
 const nodeSettingMeta: Record<string, { label: string; description: string; placeholder?: string }> = {
   node_filter_patterns: {
     label: '节点过滤通配符',
-    description: '同步节点池时按节点名称过滤，多个规则用英文逗号分隔，例如：*天*,*剩余*。',
+    description: '同步节点池时按节点名称过滤，多个规则用英文逗号分隔；保存后会自动触发一次节点池同步。',
     placeholder: '*天*,*剩余*',
-  },
-  node_pool_sync_interval_minutes: {
-    label: '节点池同步频率（分钟）',
-    description: '后台自动同步节点池的间隔，填 0 表示关闭自动同步。',
-    placeholder: '30',
   },
 }
 

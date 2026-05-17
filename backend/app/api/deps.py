@@ -5,7 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
-from app.core.security import decode_token
+from app.core.security import TokenExpiredError, decode_token
 from app.models.user import User
 
 
@@ -22,6 +22,8 @@ async def get_current_user(
     try:
         payload = decode_token(credentials.credentials, "access")
         user = await session.get(User, int(payload["sub"]))
+    except TokenExpiredError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Access token expired") from None
     except (ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid bearer token") from None
     if user is None or not user.is_active:

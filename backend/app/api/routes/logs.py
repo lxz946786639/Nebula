@@ -26,9 +26,12 @@ RESOURCE_LABELS = {
 
 ACTION_LABELS = {
     "login": "登录",
+    "logout": "登出",
+    "token_refresh": "续期",
     "create": "新增",
     "update": "修改",
     "delete": "删除",
+    "preview": "预览",
     "refresh": "刷新",
     "refresh_failed": "刷新失败",
     "traffic_refresh": "刷新流量",
@@ -46,7 +49,7 @@ ACTION_LABELS = {
     "access_enforce": "访问控制",
 }
 
-DETAIL_ACTIONS = {"traffic_refresh", "test_latency", "access_enforce", "health_check", "reload", "sync"}
+DETAIL_ACTIONS = {"traffic_refresh", "test_latency", "access_enforce", "health_check", "reload", "sync", "preview"}
 
 
 def _resource_label(resource: str) -> str:
@@ -89,6 +92,10 @@ def _build_description(item: AuditLog) -> str:
         return detail
     if item.action == "login":
         return f"用户「{actor}」登录系统。"
+    if item.action == "logout":
+        return f"用户「{actor}」退出登录。"
+    if item.action == "token_refresh":
+        return f"用户「{actor}」刷新登录状态。"
     if detail:
         if item.action in DETAIL_ACTIONS:
             return f"用户「{actor}」执行{type_label}{action_label}：{detail}。"

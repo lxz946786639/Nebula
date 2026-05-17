@@ -1725,20 +1725,35 @@ async def prune_smart_proxy_health_logs(session: AsyncSession, proxy_id: int, *,
         await session.execute(delete(SmartProxyHealthLog).where(SmartProxyHealthLog.id.in_(ids)))
 
 
-async def refresh_smart_proxy_statuses(session: AsyncSession) -> None:
+async def refresh_smart_proxy_statuses(session: AsyncSession) -> dict[str, Any]:
     proxies = list((await session.scalars(select(SmartProxy).order_by(SmartProxy.id.asc()))).all())
     stable_changed: list[SmartProxy] = []
+    status_changes = 0
+    current_node_changes = 0
     for proxy in proxies:
+        previous_status = proxy.status
+        previous_error = proxy.last_error
         status = await smart_proxy_runtime_status(session, proxy)
         proxy.status = status["status"]
         proxy.last_error = status["error"]
+        if previous_status != proxy.status or previous_error != proxy.last_error:
+            status_changes += 1
         changed = add_smart_proxy_switch_log(session, proxy, status.get("current_node"), reason="运行状态监控发现当前节点变化")
+        if changed:
+            current_node_changes += 1
         if changed and smart_proxy_stability_priority_enabled(proxy):
             stable_changed.append(proxy)
     await session.commit()
     if stable_changed:
         await apply_stability_priority_runtime(session, stable_changed)
+    access_result: dict[str, Any] = {}
     try:
-        await enforce_smart_proxy_access(session)
+        access_result = await enforce_smart_proxy_access(session)
     except MihomoApiError:
         pass
+    return {
+        "proxies": len(proxies),
+        "status_changes": status_changes,
+        "current_node_changes": current_node_changes,
+        "closed_connections": int(access_result.get("closed_connections") or 0),
+    }

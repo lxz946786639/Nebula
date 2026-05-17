@@ -7,17 +7,15 @@ from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.core.timezone import CHINA_TZ, as_china, now_china
 from app.models.subscription import Subscription
-from app.services.aggregator import convert_subscription, refresh_subscription_source
+from app.services.aggregator import refresh_subscription_source
 from app.services.audit import write_audit
-from app.services.node_pool import sync_node_pool
 from app.services.settings import (
-    get_node_pool_sync_interval_minutes,
     get_smart_proxy_auto_apply_interval_minutes,
     get_smart_proxy_monitor_interval_minutes,
     get_traffic_poll_interval_minutes,
 )
 from app.services.smart_proxy import (
-    apply_mihomo_runtime,
+    apply_mihomo_runtime_if_changed,
     reconcile_smart_proxy_runtime_after_traffic_change,
     refresh_smart_proxy_statuses,
 )
@@ -26,7 +24,6 @@ from app.services.traffic import latest_traffic_snapshot, poll_traffic_snapshot
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=CHINA_TZ)
-last_node_pool_sync_at: datetime | None = None
 last_smart_proxy_apply_at: datetime | None = None
 last_smart_proxy_monitor_at: datetime | None = None
 
@@ -74,30 +71,6 @@ async def refresh_enabled_subscriptions() -> None:
         await session.commit()
 
 
-async def warm_default_cache() -> None:
-    async with AsyncSessionLocal() as session:
-        try:
-            await convert_subscription(session, api_target="singbox", group=None, template=None, emoji=True, bypass_cache=True)
-        except Exception as exc:
-            logger.info("Default cache warm skipped: %s", exc)
-
-
-async def sync_node_pool_by_setting() -> None:
-    global last_node_pool_sync_at
-    async with AsyncSessionLocal() as session:
-        interval_minutes = await get_node_pool_sync_interval_minutes(session)
-        if interval_minutes <= 0:
-            return
-        now = now_china()
-        if last_node_pool_sync_at and now - last_node_pool_sync_at < timedelta(minutes=interval_minutes):
-            return
-        try:
-            await sync_node_pool(session, emoji=True, audit_actor="system", audit_reason="定时同步")
-            last_node_pool_sync_at = now
-        except Exception as exc:
-            logger.info("Scheduled node pool sync skipped: %s", exc)
-
-
 async def poll_traffic_by_setting() -> None:
     async with AsyncSessionLocal() as session:
         interval_minutes = await get_traffic_poll_interval_minutes(session)
@@ -139,21 +112,23 @@ async def apply_smart_proxy_by_setting() -> None:
         if last_smart_proxy_apply_at and now - last_smart_proxy_apply_at < timedelta(minutes=interval_minutes):
             return
         try:
-            result = await apply_mihomo_runtime(session, reload_core=True)
-            await write_audit(
-                session,
-                actor="system",
-                action="reload",
-                resource="smart_proxy",
-                detail=(
-                    f"定时应用智能代理运行时配置完成：配置文件 {result.config_path}，"
-                    f"核心重载{'成功' if result.reloaded else '未完成'}"
-                    + (f"，错误：{result.error}" if result.error else "")
-                    + "。"
-                ),
-            )
-            await session.commit()
+            result, content_changed = await apply_mihomo_runtime_if_changed(session, reload_core=True)
             last_smart_proxy_apply_at = now
+            if content_changed or result.error:
+                await write_audit(
+                    session,
+                    actor="system",
+                    action="reload",
+                    resource="smart_proxy",
+                    detail=(
+                        f"定时检查智能代理运行时配置完成：配置文件 {result.config_path}，"
+                        + ("检测到配置变化并已应用，" if content_changed else "配置无变化，")
+                        + f"核心重载{'成功' if result.reloaded else '未完成'}"
+                        + (f"，错误：{result.error}" if result.error else "")
+                        + "。"
+                    ),
+                )
+                await session.commit()
         except Exception as exc:
             logger.info("Scheduled smart proxy apply skipped: %s", exc)
 
@@ -168,30 +143,49 @@ async def monitor_smart_proxy_by_setting() -> None:
         if last_smart_proxy_monitor_at and now - last_smart_proxy_monitor_at < timedelta(minutes=interval_minutes):
             return
         try:
-            await refresh_smart_proxy_statuses(session)
-            await write_audit(
-                session,
-                actor="system",
-                action="monitor",
-                resource="smart_proxy",
-                detail="定时刷新智能代理运行状态完成。",
-            )
-            await session.commit()
+            summary = await refresh_smart_proxy_statuses(session)
+            if (
+                summary.get("status_changes", 0)
+                or summary.get("current_node_changes", 0)
+                or summary.get("closed_connections", 0)
+            ):
+                await write_audit(
+                    session,
+                    actor="system",
+                    action="monitor",
+                    resource="smart_proxy",
+                    detail=(
+                        "定时刷新智能代理运行状态完成："
+                        f"状态变化 {summary.get('status_changes', 0)} 个，"
+                        f"当前节点变化 {summary.get('current_node_changes', 0)} 个，"
+                        f"关闭未授权连接 {summary.get('closed_connections', 0)} 个。"
+                    ),
+                )
+                await session.commit()
             last_smart_proxy_monitor_at = now
         except Exception as exc:
             logger.info("Scheduled smart proxy monitor skipped: %s", exc)
+
+
+async def maintenance_tick() -> None:
+    steps = (
+        refresh_enabled_subscriptions,
+        poll_traffic_by_setting,
+        apply_smart_proxy_by_setting,
+        monitor_smart_proxy_by_setting,
+    )
+    for step in steps:
+        try:
+            await step()
+        except Exception:
+            logger.exception("Scheduled maintenance step failed: %s", step.__name__)
 
 
 def start_scheduler() -> None:
     if scheduler.running:
         return
     job_defaults = {"replace_existing": True, "coalesce": True, "max_instances": 1}
-    scheduler.add_job(refresh_enabled_subscriptions, "interval", minutes=1, id="refresh_subscriptions", **job_defaults)
-    scheduler.add_job(sync_node_pool_by_setting, "interval", minutes=1, id="sync_node_pool", **job_defaults)
-    scheduler.add_job(poll_traffic_by_setting, "interval", minutes=1, id="poll_traffic", **job_defaults)
-    scheduler.add_job(apply_smart_proxy_by_setting, "interval", minutes=1, id="apply_smart_proxy", **job_defaults)
-    scheduler.add_job(monitor_smart_proxy_by_setting, "interval", minutes=1, id="monitor_smart_proxy", **job_defaults)
-    scheduler.add_job(warm_default_cache, "interval", minutes=30, id="warm_default_cache", **job_defaults)
+    scheduler.add_job(maintenance_tick, "interval", minutes=1, id="maintenance_tick", **job_defaults)
     scheduler.start()
 
 

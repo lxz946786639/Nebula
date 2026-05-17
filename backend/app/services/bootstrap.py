@@ -52,7 +52,6 @@ async def bootstrap_defaults(session: AsyncSession) -> None:
         "subscription_token": (settings.SUBSCRIPTION_TOKEN, True, "Token used by public subscription endpoints"),
         "cache_ttl_seconds": (str(settings.CACHE_TTL_SECONDS), False, "Final config cache TTL"),
         "node_filter_patterns": ("", False, "Comma-separated wildcard patterns used to skip pseudo nodes by name"),
-        "node_pool_sync_interval_minutes": ("30", False, "Node pool automatic sync interval in minutes; 0 disables it"),
         "traffic_poll_interval_minutes": ("30", False, "Subscription traffic polling interval in minutes; 0 disables it"),
         "smart_proxy_auto_apply_interval_minutes": (
             str(settings.SMART_PROXY_AUTO_APPLY_INTERVAL_MINUTES),

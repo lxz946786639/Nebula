@@ -191,12 +191,15 @@ async def _clear_nodes(
     *,
     group: str | None = None,
     subscription_id: int | None = None,
+    keep_identities: set[str] | None = None,
 ) -> int:
     stmt = delete(Node)
     if subscription_id is not None:
         stmt = stmt.where(Node.source_subscription_id == subscription_id)
     elif group:
         stmt = stmt.where(Node.source_group == group)
+    if keep_identities:
+        stmt = stmt.where(Node.identity.notin_(keep_identities))
     result = await session.execute(stmt)
     return int(result.rowcount or 0)
 
@@ -208,15 +211,26 @@ async def _replace_nodes(
     group: str | None = None,
     subscription_id: int | None = None,
 ) -> int:
-    cleared_nodes = await _clear_nodes(session, group=group, subscription_id=subscription_id)
+    payload_identities = {str(payload["identity"]) for payload in payloads}
+    existing_by_identity: dict[str, Node] = {}
+    if payload_identities:
+        existing_nodes = await session.scalars(select(Node).where(Node.identity.in_(payload_identities)))
+        existing_by_identity = {node.identity: node for node in existing_nodes.all()}
+
     for payload in payloads:
-        node = await session.scalar(select(Node).where(Node.identity == payload["identity"]))
+        node = existing_by_identity.get(str(payload["identity"]))
         if node is None:
             session.add(Node(**payload, enabled=True))
             continue
         for key, value in payload.items():
             setattr(node, key, value)
         node.enabled = True
+    cleared_nodes = await _clear_nodes(
+        session,
+        group=group,
+        subscription_id=subscription_id,
+        keep_identities=payload_identities,
+    )
     return cleared_nodes
 
 

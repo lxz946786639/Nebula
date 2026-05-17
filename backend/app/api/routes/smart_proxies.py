@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 from ipaddress import ip_network
 
@@ -32,6 +33,7 @@ from app.schemas.smart_proxy import (
     SmartProxyUpdate,
 )
 from app.services.audit import write_audit
+from app.services.node_pool import sync_node_pool
 from app.services.smart_proxy import (
     SmartProxyError,
     MihomoApiError,
@@ -64,6 +66,7 @@ from app.services.settings import (
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 GLOBAL_CONFIG_KEYS = {
     "smart_proxy_auto_apply_interval_minutes",
     "smart_proxy_monitor_interval_minutes",
@@ -83,7 +86,7 @@ GLOBAL_CONFIG_LABELS = {
     "low_remaining_mb": "低剩余流量阈值",
     "expire_soon_days": "临近到期天数",
     "exclude_unknown_traffic": "排除未知流量订阅",
-    "smart_proxy_auto_apply_interval_minutes": "自动应用频率",
+    "smart_proxy_auto_apply_interval_minutes": "按需应用检查频率",
     "smart_proxy_monitor_interval_minutes": "运行状态监控频率",
     "mihomo_api_url": "Mihomo API 地址",
     "mihomo_api_secret": "Mihomo API 密钥",
@@ -199,6 +202,29 @@ async def _read_proxy(
     data.runtime_apply_error = runtime_apply_error
     data.apply_status, data.apply_status_reason = _apply_status(proxy)
     return data
+
+
+async def _ensure_node_pool_for_candidates(session: SessionDep, actor: str) -> None:
+    smart_proxy_count = await session.scalar(select(func.count()).select_from(SmartProxy)) or 0
+    if smart_proxy_count <= 0:
+        return
+    existing_nodes = await session.scalar(select(func.count()).select_from(Node)) or 0
+    if existing_nodes > 0:
+        return
+    enabled_subscriptions = (
+        await session.scalar(select(func.count()).select_from(Subscription).where(Subscription.enabled.is_(True))) or 0
+    )
+    if enabled_subscriptions <= 0:
+        return
+    try:
+        await sync_node_pool(
+            session,
+            emoji=True,
+            audit_actor=actor,
+            audit_reason="智能代理候选节点自动补齐",
+        )
+    except Exception as exc:
+        logger.info("Smart proxy candidate node auto-sync skipped: %s", exc)
 
 
 async def _apply_runtime_after_change(session: SessionDep) -> str | None:
@@ -355,6 +381,7 @@ async def _proxy_config(session: SessionDep, proxy: SmartProxy) -> SmartProxyCon
 
 @router.get("", response_model=list[SmartProxyRead])
 async def list_smart_proxies(session: SessionDep, current_user: CurrentUser) -> list[SmartProxyRead]:
+    await _ensure_node_pool_for_candidates(session, current_user.username)
     proxies = list((await session.scalars(select(SmartProxy).order_by(SmartProxy.id.asc()))).all())
     return [await _read_proxy(session, item) for item in proxies]
 
@@ -435,6 +462,14 @@ async def preview_runtime(
     include_content: bool = Query(default=True),
 ) -> SmartProxyRuntime:
     result = await write_mihomo_runtime_config(session)
+    await write_audit(
+        session,
+        actor=current_user.username,
+        action="preview",
+        resource="smart_proxy",
+        detail=f"预览智能代理运行时配置：配置文件 {result.config_path}，监听器 {result.listeners} 个。",
+    )
+    await session.commit()
     if not include_content:
         result.content = None
     return _runtime_response(result)
@@ -566,6 +601,7 @@ async def update_global_config(
 
 @router.get("/{proxy_id}", response_model=SmartProxyRead)
 async def get_smart_proxy(proxy_id: int, session: SessionDep, current_user: CurrentUser) -> SmartProxyRead:
+    await _ensure_node_pool_for_candidates(session, current_user.username)
     proxy = await session.get(SmartProxy, proxy_id)
     if proxy is None:
         raise HTTPException(status_code=404, detail="Smart proxy not found")
@@ -579,6 +615,7 @@ async def get_smart_proxy_status(
     current_user: CurrentUser,
     delay: bool = Query(default=False),
 ) -> SmartProxyStatus:
+    await _ensure_node_pool_for_candidates(session, current_user.username)
     proxy = await session.get(SmartProxy, proxy_id)
     if proxy is None:
         raise HTTPException(status_code=404, detail="Smart proxy not found")

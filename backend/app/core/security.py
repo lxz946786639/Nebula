@@ -1,7 +1,7 @@
 from datetime import timedelta
 from typing import Any
 
-from jose import JWTError, jwt
+from jose import ExpiredSignatureError, JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import get_settings
@@ -10,6 +10,10 @@ from app.core.timezone import now_china
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+class TokenExpiredError(ValueError):
+    pass
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -28,9 +32,16 @@ def create_token(subject: str, expires_minutes: int, token_type: str = "access",
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def decode_token(token: str, expected_type: str = "access") -> dict[str, Any]:
+def decode_token(token: str, expected_type: str = "access", *, verify_exp: bool = True) -> dict[str, Any]:
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+            options={"verify_exp": verify_exp},
+        )
+    except ExpiredSignatureError as exc:
+        raise TokenExpiredError("Token expired") from exc
     except JWTError as exc:
         raise ValueError("Invalid token") from exc
     if payload.get("type") != expected_type:

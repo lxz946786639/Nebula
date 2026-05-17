@@ -24,13 +24,21 @@ export const useAuthStore = defineStore('auth', {
       localStorage.setItem('refresh_token', data.refresh_token)
       localStorage.setItem('username', username)
     },
-    logout() {
-      this.accessToken = ''
-      this.refreshToken = ''
-      this.username = ''
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('refresh_token')
-      localStorage.removeItem('username')
+    async logout(remote = true) {
+      try {
+        if (remote && (this.accessToken || localStorage.getItem('access_token'))) {
+          await http.post('/auth/logout')
+        }
+      } catch {
+        // Local logout should still succeed if the server session is already expired.
+      } finally {
+        this.accessToken = ''
+        this.refreshToken = ''
+        this.username = ''
+        localStorage.removeItem('access_token')
+        localStorage.removeItem('refresh_token')
+        localStorage.removeItem('username')
+      }
     },
   },
 })

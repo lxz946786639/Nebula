@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, SessionDep
@@ -7,6 +7,7 @@ from app.models.system_setting import SystemSetting
 from app.schemas.common import HealthStatus
 from app.schemas.settings import SettingBulkUpdate, SettingRead
 from app.services.audit import write_audit
+from app.services.node_pool import sync_node_pool_background
 from app.services.settings import get_subconverter_url
 from app.services.subconverter import SubconverterClient
 
@@ -16,7 +17,7 @@ SMART_PROXY_SETTING_PREFIXES = ("smart_proxy_", "mihomo_")
 SETTING_SCOPES = {
     "system": {"redis_url", "subconverter_url", "acl4ssr_config_url"},
     "subscription": {"subscription_token", "cache_ttl_seconds", "traffic_poll_interval_minutes"},
-    "node": {"node_filter_patterns", "node_pool_sync_interval_minutes"},
+    "node": {"node_filter_patterns"},
 }
 SETTING_LABELS = {
     "redis_url": "Redis 地址",
@@ -26,7 +27,6 @@ SETTING_LABELS = {
     "subscription_token": "订阅访问 Token",
     "cache_ttl_seconds": "缓存有效期",
     "node_filter_patterns": "节点过滤通配符",
-    "node_pool_sync_interval_minutes": "节点池同步频率",
     "traffic_poll_interval_minutes": "流量刷新频率",
 }
 
@@ -59,6 +59,7 @@ async def list_settings(
 @router.put("", response_model=list[SettingRead])
 async def update_settings(
     payload: SettingBulkUpdate,
+    background_tasks: BackgroundTasks,
     session: SessionDep,
     current_user: CurrentUser,
 ) -> list[SettingRead]:
@@ -69,7 +70,7 @@ async def update_settings(
             item = SystemSetting(key=key, value=value, secret="token" in key.lower())
             session.add(item)
             changed_keys.append(key)
-        elif value != "********":
+        elif value != "********" and item.value != value:
             item.value = value
             changed_keys.append(key)
     changed = "、".join(SETTING_LABELS.get(key, key) for key in changed_keys) if changed_keys else "无字段变化"
@@ -81,6 +82,13 @@ async def update_settings(
         detail=f"更新系统配置，变更字段：{changed}。",
     )
     await session.commit()
+    if "node_filter_patterns" in changed_keys:
+        background_tasks.add_task(
+            sync_node_pool_background,
+            emoji=True,
+            actor=current_user.username,
+            reason="节点过滤配置变更后同步",
+        )
     return await list_settings(session, current_user)
 
 

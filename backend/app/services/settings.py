@@ -37,15 +37,6 @@ async def get_node_filter_patterns(session: AsyncSession) -> list[str]:
     return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
-async def get_node_pool_sync_interval_minutes(session: AsyncSession) -> int:
-    value = await get_setting(session, "node_pool_sync_interval_minutes", "30")
-    try:
-        interval = int(value or "30")
-    except ValueError:
-        return 30
-    return max(interval, 0)
-
-
 async def get_traffic_poll_interval_minutes(session: AsyncSession) -> int:
     value = await get_setting(session, "traffic_poll_interval_minutes", "30")
     try:

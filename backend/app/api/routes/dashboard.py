@@ -13,6 +13,7 @@ from app.services.settings import get_subconverter_url, get_subscription_token
 from app.services.smart_proxy import mihomo_core_status, reconcile_smart_proxy_runtime_after_traffic_change
 from app.services.subconverter import SubconverterClient
 from app.models.traffic_snapshot import TrafficSnapshot
+from app.services.audit import write_audit
 from app.services.traffic import get_or_create_traffic_snapshot, latest_traffic_snapshot, poll_traffic_snapshot
 
 
@@ -76,6 +77,15 @@ async def refresh_dashboard_traffic(session: SessionDep, current_user: CurrentUs
         snapshot,
         actor=current_user.username,
     )
+    failed = sum(1 for item in snapshot.items if item.get("error"))
+    await write_audit(
+        session,
+        actor=current_user.username,
+        action="traffic_refresh",
+        resource="subscription",
+        detail=f"首页手动刷新订阅流量完成：共 {len(snapshot.items)} 个订阅，异常 {failed} 个。",
+    )
+    await session.commit()
     return _traffic_stats(snapshot, statuses)
 
 

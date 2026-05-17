@@ -68,6 +68,7 @@ import {
   SwitchButton,
   Tools,
 } from '@element-plus/icons-vue'
+import { ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -115,8 +116,20 @@ const socketLabel = computed(() => {
 })
 const socketTitle = computed(() => `WebSocket：${socketLabel.value}`)
 
-function logout() {
-  auth.logout()
+async function logout() {
+  try {
+    await ElMessageBox.confirm('确认退出当前账号吗？退出后需要重新登录才能继续使用系统。', '退出登录', {
+      type: 'warning',
+      confirmButtonText: '退出登录',
+      cancelButtonText: '取消',
+      autofocus: false,
+    })
+  } catch {
+    return
+  }
+
+  await auth.logout()
+  stopSocket()
   router.push('/login')
 }
 
