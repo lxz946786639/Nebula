@@ -11,8 +11,9 @@ from app.schemas.subscription import SubscriptionCreate, SubscriptionRead, Subsc
 from app.services.aggregator import refresh_subscription_source
 from app.services.audit import write_audit
 from app.services.node_pool import sync_node_pool_background
+from app.services.smart_proxy import reconcile_smart_proxy_runtime_after_traffic_change
 from app.services.subconverter import SubconverterError
-from app.services.traffic import get_or_create_traffic_snapshot, poll_traffic_snapshot
+from app.services.traffic import get_or_create_traffic_snapshot, latest_traffic_snapshot, poll_traffic_snapshot
 from app.utils.network import UrlValidationError, validate_subscription_url
 
 
@@ -117,7 +118,14 @@ async def list_subscriptions(
 
 @router.post("/traffic/refresh", response_model=list[SubscriptionRead])
 async def refresh_subscription_traffic(session: SessionDep, current_user: CurrentUser) -> list[SubscriptionRead]:
+    previous_snapshot = await latest_traffic_snapshot(session)
     snapshot = await poll_traffic_snapshot(session)
+    await reconcile_smart_proxy_runtime_after_traffic_change(
+        session,
+        previous_snapshot,
+        snapshot,
+        actor=current_user.username,
+    )
     failed = sum(1 for item in snapshot.items if item.get("error"))
     await write_audit(
         session,

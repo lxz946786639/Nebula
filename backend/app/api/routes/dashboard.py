@@ -10,10 +10,10 @@ from app.models.smart_proxy import SmartProxy
 from app.models.subscription import Subscription
 from app.schemas.dashboard import ClientSubscriptionUrl, DashboardStats, TrafficItem, TrafficStats
 from app.services.settings import get_subconverter_url, get_subscription_token
-from app.services.smart_proxy import mihomo_core_status
+from app.services.smart_proxy import mihomo_core_status, reconcile_smart_proxy_runtime_after_traffic_change
 from app.services.subconverter import SubconverterClient
 from app.models.traffic_snapshot import TrafficSnapshot
-from app.services.traffic import get_or_create_traffic_snapshot, poll_traffic_snapshot
+from app.services.traffic import get_or_create_traffic_snapshot, latest_traffic_snapshot, poll_traffic_snapshot
 
 
 router = APIRouter()
@@ -68,7 +68,15 @@ def _traffic_stats(snapshot: TrafficSnapshot, subscription_statuses: dict[int, t
 async def refresh_dashboard_traffic(session: SessionDep, current_user: CurrentUser) -> TrafficStats:
     subscriptions = (await session.scalars(select(Subscription))).all()
     statuses = {item.id: (item.last_status, item.last_error) for item in subscriptions}
-    return _traffic_stats(await poll_traffic_snapshot(session), statuses)
+    previous_snapshot = await latest_traffic_snapshot(session)
+    snapshot = await poll_traffic_snapshot(session)
+    await reconcile_smart_proxy_runtime_after_traffic_change(
+        session,
+        previous_snapshot,
+        snapshot,
+        actor=current_user.username,
+    )
+    return _traffic_stats(snapshot, statuses)
 
 
 @router.get("", response_model=DashboardStats)

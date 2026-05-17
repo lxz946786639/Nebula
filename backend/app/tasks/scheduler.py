@@ -16,7 +16,11 @@ from app.services.settings import (
     get_smart_proxy_monitor_interval_minutes,
     get_traffic_poll_interval_minutes,
 )
-from app.services.smart_proxy import apply_mihomo_runtime, refresh_smart_proxy_statuses
+from app.services.smart_proxy import (
+    apply_mihomo_runtime,
+    reconcile_smart_proxy_runtime_after_traffic_change,
+    refresh_smart_proxy_statuses,
+)
 from app.services.traffic import latest_traffic_snapshot, poll_traffic_snapshot
 
 
@@ -104,7 +108,14 @@ async def poll_traffic_by_setting() -> None:
         if latest and latest.created_at and now - _as_china(latest.created_at) < timedelta(minutes=interval_minutes):
             return
         try:
+            previous_snapshot = latest
             snapshot = await poll_traffic_snapshot(session)
+            await reconcile_smart_proxy_runtime_after_traffic_change(
+                session,
+                previous_snapshot,
+                snapshot,
+                actor="system",
+            )
             failed = sum(1 for item in snapshot.items if item.get("error"))
             await write_audit(
                 session,

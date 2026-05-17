@@ -23,6 +23,8 @@ from app.models.smart_proxy import SmartProxy
 from app.models.smart_proxy_health import SmartProxyHealthLog
 from app.models.smart_proxy_switch import SmartProxySwitchLog
 from app.models.traffic_snapshot import TrafficSnapshot
+from app.services.audit import write_audit
+from app.services.node_latency import test_selected_node_latencies
 from app.services.node_processor import dump_yaml_config
 from app.services.settings import (
     get_mihomo_api_secret,
@@ -103,6 +105,17 @@ class SmartProxyTrafficPolicy:
     low_remaining_mb: int
     expire_soon_days: int
     exclude_unknown_traffic: bool
+
+
+@dataclass(slots=True)
+class TrafficRuntimeReconcileResult:
+    changed_subscriptions: int = 0
+    checked_nodes: int = 0
+    online_nodes: int = 0
+    failed_nodes: int = 0
+    applied: bool = False
+    reason: str | None = None
+    error: str | None = None
 
 
 @dataclass(slots=True)
@@ -284,6 +297,24 @@ def _parse_datetime(value: str | None) -> datetime | None:
     return as_china(parsed)
 
 
+def _traffic_exclusion_reason(
+    raw: dict[str, Any] | None,
+    policy: SmartProxyTrafficPolicy,
+    reference_time: datetime,
+) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    total = int(raw.get("total") or 0)
+    remaining = int(raw.get("remaining") or 0)
+    expire_at = _parse_datetime(raw.get("expire_at"))
+    min_remaining = policy.min_remaining_mb * 1024 * 1024
+    if expire_at is not None and expire_at <= reference_time:
+        return "subscription expired"
+    if total > 0 and remaining <= min_remaining:
+        return "subscription traffic exhausted"
+    return None
+
+
 async def smart_proxy_traffic_policy(session: AsyncSession, proxy: SmartProxy | None = None) -> SmartProxyTrafficPolicy:
     global_policy = SmartProxyTrafficPolicy(
         traffic_guard_enabled=await get_smart_proxy_traffic_guard_enabled(session),
@@ -329,7 +360,6 @@ async def _traffic_state_map(
     if snapshot is None:
         return {}, None
 
-    min_remaining = policy.min_remaining_mb * 1024 * 1024
     low_remaining = policy.low_remaining_mb * 1024 * 1024
     expire_soon_days = policy.expire_soon_days
     exclude_unknown = policy.exclude_unknown_traffic
@@ -346,26 +376,21 @@ async def _traffic_state_map(
         total = int(raw.get("total") or 0)
         remaining = int(raw.get("remaining") or 0)
         expire_at = _parse_datetime(raw.get("expire_at"))
-        expired = expire_at is not None and expire_at <= now
-        exhausted = available and total > 0 and remaining <= min_remaining
+        exclusion_reason = _traffic_exclusion_reason(raw, policy, now)
         low = available and low_remaining > 0 and remaining <= low_remaining
         expire_soon = expire_at is not None and now < expire_at <= soon_before
 
         status = "healthy"
         reason: str | None = None
         priority = 0
-        if not available:
+        if exclusion_reason:
+            status = "excluded"
+            reason = exclusion_reason
+            priority = 3
+        elif not available:
             status = "excluded" if exclude_unknown else "unknown"
             reason = str(raw.get("error") or "traffic header missing")
             priority = 3 if exclude_unknown else 2
-        elif expired:
-            status = "excluded"
-            reason = "subscription expired"
-            priority = 3
-        elif exhausted:
-            status = "excluded"
-            reason = "subscription traffic exhausted"
-            priority = 3
         elif low:
             status = "risk"
             reason = "subscription traffic is low"
@@ -553,6 +578,156 @@ async def traffic_schedule_for_proxy(session: AsyncSession, proxy: SmartProxy) -
     selected_nodes = _apply_strategy_node_selection(source_nodes, proxy)
     _, schedule = await traffic_schedule_for_nodes(session, selected_nodes, proxy=proxy)
     return schedule
+
+
+def _snapshot_item_map(snapshot: TrafficSnapshot | None) -> dict[int, dict[str, Any]]:
+    if snapshot is None:
+        return {}
+    items: dict[int, dict[str, Any]] = {}
+    for raw in snapshot.items or []:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            subscription_id = int(raw.get("subscription_id"))
+        except (TypeError, ValueError):
+            continue
+        if subscription_id > 0:
+            items[subscription_id] = raw
+    return items
+
+
+def _snapshot_reference_time(snapshot: TrafficSnapshot | None, fallback: datetime) -> datetime:
+    if snapshot is None or snapshot.created_at is None:
+        return fallback
+    return as_china(snapshot.created_at) or fallback
+
+
+def _traffic_exclusion_reasons(
+    snapshot: TrafficSnapshot | None,
+    policy: SmartProxyTrafficPolicy,
+    reference_time: datetime,
+) -> dict[int, str]:
+    reasons: dict[int, str] = {}
+    for subscription_id, raw in _snapshot_item_map(snapshot).items():
+        reason = _traffic_exclusion_reason(raw, policy, reference_time)
+        if reason:
+            reasons[subscription_id] = reason
+    return reasons
+
+
+async def _smart_proxy_nodes_for_subscriptions(
+    session: AsyncSession,
+    subscription_ids: set[int],
+) -> tuple[list[Node], set[str]]:
+    if not subscription_ids:
+        return [], set()
+    proxies = list((await session.scalars(select(SmartProxy).where(SmartProxy.enabled.is_(True)))).all())
+    nodes_by_id: dict[int, Node] = {}
+    proxy_names: set[str] = set()
+    for proxy in proxies:
+        nodes = await source_nodes_for_proxy(session, proxy, latency_order=False)
+        matched = [node for node in nodes if node.id is not None and node.source_subscription_id in subscription_ids]
+        if not matched:
+            continue
+        proxy_names.add(proxy.name)
+        for node in matched:
+            nodes_by_id[node.id] = node
+    return list(nodes_by_id.values()), proxy_names
+
+
+async def reconcile_smart_proxy_runtime_after_traffic_change(
+    session: AsyncSession,
+    previous_snapshot: TrafficSnapshot | None,
+    current_snapshot: TrafficSnapshot,
+    *,
+    actor: str = "system",
+) -> TrafficRuntimeReconcileResult:
+    policy = await smart_proxy_traffic_policy(session)
+    if not policy.traffic_guard_enabled:
+        return TrafficRuntimeReconcileResult(reason="traffic guard disabled")
+
+    now = now_china()
+    previous_reasons = _traffic_exclusion_reasons(
+        previous_snapshot,
+        policy,
+        _snapshot_reference_time(previous_snapshot, now),
+    )
+    current_items = _snapshot_item_map(current_snapshot)
+    current_reasons = _traffic_exclusion_reasons(current_snapshot, policy, now)
+    changed_subscription_ids = {
+        subscription_id
+        for subscription_id in set(previous_reasons) | set(current_reasons)
+        if subscription_id in current_items
+        if previous_reasons.get(subscription_id) != current_reasons.get(subscription_id)
+    }
+    if not changed_subscription_ids:
+        return TrafficRuntimeReconcileResult(reason="no blocking traffic state change")
+
+    affected_nodes, proxy_names = await _smart_proxy_nodes_for_subscriptions(session, changed_subscription_ids)
+    if not affected_nodes:
+        return TrafficRuntimeReconcileResult(
+            changed_subscriptions=len(changed_subscription_ids),
+            reason="no referenced smart proxy nodes",
+        )
+
+    check = await test_selected_node_latencies(session, affected_nodes, timeout_ms=3000, concurrency=30)
+    nodes_by_id = {node.id: node for node in affected_nodes if node.id is not None}
+    failed_node_ids = set(check.failed_node_ids)
+    online_node_ids = set(check.online_node_ids)
+    blocked_subscription_ids = {item for item in changed_subscription_ids if current_reasons.get(item)}
+    restored_subscription_ids = changed_subscription_ids - blocked_subscription_ids
+
+    blocked_and_failed = any(
+        node.source_subscription_id in blocked_subscription_ids and node_id in failed_node_ids
+        for node_id, node in nodes_by_id.items()
+    )
+    restored_and_online = any(
+        node.source_subscription_id in restored_subscription_ids and node_id in online_node_ids
+        for node_id, node in nodes_by_id.items()
+    )
+    if not (blocked_and_failed or restored_and_online):
+        await session.commit()
+        return TrafficRuntimeReconcileResult(
+            changed_subscriptions=len(changed_subscription_ids),
+            checked_nodes=check.tested_nodes,
+            online_nodes=check.online_nodes,
+            failed_nodes=check.failed_nodes,
+            reason="checked nodes did not require runtime reload",
+        )
+
+    result = await apply_mihomo_runtime(session, reload_core=True)
+    reason_parts: list[str] = []
+    if blocked_and_failed:
+        reason_parts.append("到期/耗尽订阅节点不可用")
+    if restored_and_online:
+        reason_parts.append("订阅恢复且节点可用")
+    await write_audit(
+        session,
+        actor=actor,
+        action="reload",
+        resource="smart_proxy",
+        detail=(
+            "订阅流量状态变化后自动重新应用 Mihomo runtime："
+            f"触发原因 {'、'.join(reason_parts)}，"
+            f"影响订阅 {len(changed_subscription_ids)} 个，"
+            f"检测节点 {check.tested_nodes} 个，在线 {check.online_nodes} 个，失败 {check.failed_nodes} 个，"
+            f"影响智能代理 {len(proxy_names)} 个"
+            + (f"（{ '、'.join(sorted(proxy_names)[:3]) }）" if proxy_names else "")
+            + f"，核心重载{'成功' if result.reloaded else '未完成'}"
+            + (f"，错误：{result.error}" if result.error else "")
+            + "。"
+        ),
+    )
+    await session.commit()
+    return TrafficRuntimeReconcileResult(
+        changed_subscriptions=len(changed_subscription_ids),
+        checked_nodes=check.tested_nodes,
+        online_nodes=check.online_nodes,
+        failed_nodes=check.failed_nodes,
+        applied=True,
+        reason="; ".join(reason_parts),
+        error=result.error,
+    )
 
 
 async def smart_proxy_candidate_count(session: AsyncSession, proxy: SmartProxy) -> int:
