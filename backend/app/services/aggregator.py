@@ -1,6 +1,6 @@
 import hashlib
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_get_json, cache_get_text, cache_set_json, cache_set_text
@@ -88,8 +88,15 @@ async def convert_subscription(
     await cache_set_text(final_cache_key, converted, ttl)
     await cache_set_json(nodes_cache_key, nodes, ttl)
     session.add(NodeSnapshot(cache_key=cache_key, target=target, group_name=group, total_nodes=len(nodes), nodes=nodes))
+    await prune_node_snapshots(session)
     await session.commit()
     return converted, nodes
+
+
+async def prune_node_snapshots(session: AsyncSession, *, keep: int = 200) -> None:
+    ids = list((await session.scalars(select(NodeSnapshot.id).order_by(NodeSnapshot.id.desc()).offset(keep))).all())
+    if ids:
+        await session.execute(delete(NodeSnapshot).where(NodeSnapshot.id.in_(ids)))
 
 
 async def refresh_subscription_source(

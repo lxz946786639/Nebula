@@ -31,12 +31,23 @@ def _as_china(value: datetime) -> datetime:
     return as_china(value) or value
 
 
+def _subscription_refresh_due(subscription: Subscription, now: datetime) -> bool:
+    if subscription.last_updated_at is None:
+        return True
+    interval_seconds = max(int(subscription.update_interval or 0), 60)
+    return now - _as_china(subscription.last_updated_at) >= timedelta(seconds=interval_seconds)
+
+
 async def refresh_enabled_subscriptions() -> None:
     async with AsyncSessionLocal() as session:
         result = await session.scalars(select(Subscription).where(Subscription.enabled.is_(True)))
+        now = now_china()
         success_count = 0
         failed: list[str] = []
-        for subscription in result.all():
+        due_subscriptions = [item for item in result.all() if _subscription_refresh_due(item, now)]
+        if not due_subscriptions:
+            return
+        for subscription in due_subscriptions:
             try:
                 await refresh_subscription_source(session, subscription, audit_actor="system")
                 success_count += 1
@@ -52,7 +63,7 @@ async def refresh_enabled_subscriptions() -> None:
             action="refresh",
             resource="subscription",
             detail=(
-                f"定时刷新订阅完成：成功 {success_count} 个，失败 {len(failed)} 个。"
+                f"按订阅更新间隔刷新完成：到期 {len(due_subscriptions)} 个，成功 {success_count} 个，失败 {len(failed)} 个。"
                 + (f"异常：{'；'.join(failed[:3])}。" if failed else "")
             ),
         )
@@ -163,11 +174,13 @@ async def monitor_smart_proxy_by_setting() -> None:
 def start_scheduler() -> None:
     if scheduler.running:
         return
-    scheduler.add_job(sync_node_pool_by_setting, "interval", minutes=1, id="sync_node_pool", replace_existing=True)
-    scheduler.add_job(poll_traffic_by_setting, "interval", minutes=1, id="poll_traffic", replace_existing=True)
-    scheduler.add_job(apply_smart_proxy_by_setting, "interval", minutes=1, id="apply_smart_proxy", replace_existing=True)
-    scheduler.add_job(monitor_smart_proxy_by_setting, "interval", minutes=1, id="monitor_smart_proxy", replace_existing=True)
-    scheduler.add_job(warm_default_cache, "interval", minutes=30, id="warm_default_cache", replace_existing=True)
+    job_defaults = {"replace_existing": True, "coalesce": True, "max_instances": 1}
+    scheduler.add_job(refresh_enabled_subscriptions, "interval", minutes=1, id="refresh_subscriptions", **job_defaults)
+    scheduler.add_job(sync_node_pool_by_setting, "interval", minutes=1, id="sync_node_pool", **job_defaults)
+    scheduler.add_job(poll_traffic_by_setting, "interval", minutes=1, id="poll_traffic", **job_defaults)
+    scheduler.add_job(apply_smart_proxy_by_setting, "interval", minutes=1, id="apply_smart_proxy", **job_defaults)
+    scheduler.add_job(monitor_smart_proxy_by_setting, "interval", minutes=1, id="monitor_smart_proxy", **job_defaults)
+    scheduler.add_job(warm_default_cache, "interval", minutes=30, id="warm_default_cache", **job_defaults)
     scheduler.start()
 
 

@@ -65,8 +65,6 @@ from app.services.settings import (
 
 router = APIRouter()
 GLOBAL_CONFIG_KEYS = {
-    "smart_proxy_port_start",
-    "smart_proxy_port_end",
     "smart_proxy_auto_apply_interval_minutes",
     "smart_proxy_monitor_interval_minutes",
     "mihomo_api_url",
@@ -85,8 +83,6 @@ GLOBAL_CONFIG_LABELS = {
     "low_remaining_mb": "低剩余流量阈值",
     "expire_soon_days": "临近到期天数",
     "exclude_unknown_traffic": "排除未知流量订阅",
-    "smart_proxy_port_start": "智能代理起始端口",
-    "smart_proxy_port_end": "智能代理结束端口",
     "smart_proxy_auto_apply_interval_minutes": "自动应用频率",
     "smart_proxy_monitor_interval_minutes": "运行状态监控频率",
     "mihomo_api_url": "Mihomo API 地址",

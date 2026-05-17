@@ -118,8 +118,6 @@ class SmartProxyGlobalConfig(BaseModel):
 
 
 class SmartProxyGlobalConfigUpdate(BaseModel):
-    smart_proxy_port_start: int | None = None
-    smart_proxy_port_end: int | None = None
     smart_proxy_auto_apply_interval_minutes: int | None = None
     smart_proxy_monitor_interval_minutes: int | None = None
     mihomo_api_url: str | None = None

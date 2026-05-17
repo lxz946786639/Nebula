@@ -72,8 +72,8 @@ async def get_bool_setting(session: AsyncSession, key: str, fallback: bool) -> b
 
 async def get_smart_proxy_port_range(session: AsyncSession) -> tuple[int, int]:
     settings = get_settings()
-    start = await get_int_setting(session, "smart_proxy_port_start", settings.SMART_PROXY_PORT_START)
-    end = await get_int_setting(session, "smart_proxy_port_end", settings.SMART_PROXY_PORT_END)
+    start = settings.SMART_PROXY_PORT_START
+    end = settings.SMART_PROXY_PORT_END
     if end < start:
         return settings.SMART_PROXY_PORT_START, settings.SMART_PROXY_PORT_END
     return start, end

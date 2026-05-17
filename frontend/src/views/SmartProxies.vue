@@ -186,7 +186,13 @@
               <el-input v-model="form.listen_host" placeholder="127.0.0.1 或 0.0.0.0" />
             </el-form-item>
             <el-form-item label="监听端口" required>
-              <el-input-number v-model="form.port" :min="1" :max="65535" controls-position="right" style="width: 100%" />
+              <el-input-number
+                v-model="form.port"
+                :min="globalConfig.smart_proxy_port_start"
+                :max="globalConfig.smart_proxy_port_end"
+                controls-position="right"
+                style="width: 100%"
+              />
             </el-form-item>
             <el-form-item label="启用代理" class="switch-form-item">
               <el-switch v-model="form.enabled" active-text="启用" inactive-text="停用" inline-prompt />
@@ -499,11 +505,8 @@
   <el-dialog v-model="globalConfigVisible" title="智能代理全局配置" width="760px">
     <el-form label-position="top">
       <div class="form-grid">
-        <el-form-item label="起始端口">
-          <el-input-number v-model="globalConfig.smart_proxy_port_start" :min="1" :max="65535" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="结束端口">
-          <el-input-number v-model="globalConfig.smart_proxy_port_end" :min="1" :max="65535" style="width: 100%" />
+        <el-form-item label="部署端口范围">
+          <el-input :model-value="`${globalConfig.smart_proxy_port_start}-${globalConfig.smart_proxy_port_end}`" readonly />
         </el-form-item>
         <el-form-item>
           <template #label>
@@ -1079,8 +1082,8 @@ const form = reactive({
   enabled: true,
 })
 const globalConfig = reactive<SmartProxyGlobalConfig>({
-  smart_proxy_port_start: 30001,
-  smart_proxy_port_end: 30999,
+  smart_proxy_port_start: 37890,
+  smart_proxy_port_end: 37900,
   smart_proxy_auto_apply_interval_minutes: 0,
   smart_proxy_monitor_interval_minutes: 1,
   mihomo_api_url: '',
@@ -1741,6 +1744,7 @@ async function openEdit(row: SmartProxy) {
   nodeIds.value = [...row.node_ids]
   strategyNodeIds.value = [...(row.strategy_node_ids || [])]
   pruneStrategyNodesToManualSource()
+  await loadNodeLabelCache([...nodeIds.value, ...strategyNodeIds.value])
   protocolTypes.value = [...row.protocol_types]
   ipWhitelistText.value = (row.ip_whitelist || []).join('\n')
   const { data: config } = await http.get(`/smart-proxies/${row.id}/config`)
@@ -1812,6 +1816,16 @@ async function loadNodeOptions() {
   } finally {
     nodePickerLoading.value = false
   }
+}
+
+async function loadNodeLabelCache(nodeIdsToLoad: number[]) {
+  const missingIds = [...new Set(nodeIdsToLoad)].filter((nodeId) => Number.isInteger(nodeId) && !nodeCache.value[nodeId])
+  if (!missingIds.length) return
+  const { data } = await http.get('/nodes')
+  const items = data.items.filter((item: NodeItem) => Number.isInteger(item.id))
+  items.forEach((item: NodeItem) => {
+    nodeCache.value[item.id] = item
+  })
 }
 
 function normalizedProtocolTypes() {
@@ -1973,7 +1987,20 @@ async function openGlobalConfig() {
 }
 
 async function saveGlobalConfig() {
-  const { data } = await http.put('/smart-proxies/config/global', globalConfig)
+  const payload = {
+    smart_proxy_auto_apply_interval_minutes: globalConfig.smart_proxy_auto_apply_interval_minutes,
+    smart_proxy_monitor_interval_minutes: globalConfig.smart_proxy_monitor_interval_minutes,
+    mihomo_api_url: globalConfig.mihomo_api_url,
+    mihomo_api_secret: globalConfig.mihomo_api_secret,
+    mihomo_runtime_config_path: globalConfig.mihomo_runtime_config_path,
+    mihomo_core_config_path: globalConfig.mihomo_core_config_path,
+    traffic_guard_enabled: globalConfig.traffic_guard_enabled,
+    min_remaining_mb: globalConfig.min_remaining_mb,
+    low_remaining_mb: globalConfig.low_remaining_mb,
+    expire_soon_days: globalConfig.expire_soon_days,
+    exclude_unknown_traffic: globalConfig.exclude_unknown_traffic,
+  }
+  const { data } = await http.put('/smart-proxies/config/global', payload)
   notifyRuntimeApply(data.runtime_apply_error, '全局配置已保存并自动应用到 Mihomo')
   globalConfigVisible.value = false
   await load()

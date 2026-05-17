@@ -11,6 +11,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
+from app.core.locks import exclusive_lock
 from app.core.timezone import now_china
 from app.models.node import Node
 from app.models.subscription import Subscription
@@ -220,6 +221,26 @@ async def _replace_nodes(
 
 
 async def sync_node_pool(
+    session: AsyncSession,
+    *,
+    group: str | None = None,
+    subscription_id: int | None = None,
+    emoji: bool = True,
+    audit_actor: str = "system",
+    audit_reason: str | None = None,
+) -> NodePoolSyncResult:
+    async with exclusive_lock("node_pool"):
+        return await _sync_node_pool_unlocked(
+            session,
+            group=group,
+            subscription_id=subscription_id,
+            emoji=emoji,
+            audit_actor=audit_actor,
+            audit_reason=audit_reason,
+        )
+
+
+async def _sync_node_pool_unlocked(
     session: AsyncSession,
     *,
     group: str | None = None,

@@ -14,12 +14,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.settings = get_settings()
         self.buckets: dict[str, deque[float]] = defaultdict(deque)
 
+    def _client_ip(self, request: Request) -> str:
+        if self.settings.RATE_LIMIT_TRUST_PROXY_HEADERS:
+            real_ip = request.headers.get("x-real-ip")
+            if real_ip:
+                return real_ip.strip()
+            forwarded_for = request.headers.get("x-forwarded-for")
+            if forwarded_for:
+                return forwarded_for.split(",", 1)[0].strip()
+        return request.client.host if request.client else "unknown"
+
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         if request.url.path in {"/health", "/api/health"}:
             return await call_next(request)
 
         now = time.monotonic()
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = self._client_ip(request)
         key = f"{client_ip}:{request.url.path.split('/')[1:3]}"
         bucket = self.buckets[key]
         window = self.settings.RATE_LIMIT_WINDOW_SECONDS

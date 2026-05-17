@@ -8,6 +8,7 @@ from app.core.cache import close_redis
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, init_db
 from app.core.rate_limit import RateLimitMiddleware
+from app.core.startup_checks import validate_startup_settings
 from app.services.bootstrap import bootstrap_defaults
 from app.tasks.scheduler import start_scheduler, stop_scheduler
 
@@ -17,6 +18,7 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    validate_startup_settings(settings)
     await init_db()
     async with AsyncSessionLocal() as session:
         await bootstrap_defaults(session)

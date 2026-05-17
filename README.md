@@ -2,6 +2,8 @@
 
 Nebula Subscriptions 是一个现代化代理订阅聚合与运行编排平台。它负责订阅源管理、节点池归一化、客户端配置生成、流量快照、智能代理入口和 Web 管理后台；复杂协议解析与格式转换交给 `subconverter`，真实 HTTP/SOCKS/Mixed 代理入口由 `Mihomo` runtime 提供。
 
+当前版本：`v1.0.0`
+
 ## 功能概览
 
 - 订阅管理：支持新增、编辑、删除、启用/停用订阅源，维护分组、标签、优先级、备注和更新间隔。
@@ -73,7 +75,7 @@ docker compose up -d --build
 | subconverter | `http://localhost:25500` |
 | Mihomo API | `http://localhost:9090/version` |
 
-默认管理员：
+开发/本地测试默认管理员：
 
 ```text
 用户名：admin
@@ -83,14 +85,18 @@ docker compose up -d --build
 生产环境至少修改：
 
 ```env
-SECRET_KEY=please-change-this-secret
+SECRET_KEY=your-random-secret-at-least-32-chars
 ADMIN_PASSWORD=your-strong-password
-SUBSCRIPTION_TOKEN=your-subscription-token
+SUBSCRIPTION_TOKEN=your-random-subscription-token
 ```
+
+`APP_ENV=production` 时后端会拒绝默认弱密钥启动；首次部署需要在 `.env` 中设置强密码和随机 Token，仅可信本地测试可临时设置 `ALLOW_INSECURE_DEFAULTS=true`。
 
 Docker Compose 默认使用 `TZ=Asia/Shanghai`，后端业务时间、调度器和容器系统时区均按中国时区运行。
 
-智能代理端口默认映射 `30001-30999`，由 `SMART_PROXY_PORT_START` 和 `SMART_PROXY_PORT_END` 控制。
+Docker Compose 默认只把前端、后端、Redis、subconverter、Mihomo API 和智能代理端口绑定到 `127.0.0.1`。如果需要局域网访问管理后台或代理端口，请显式设置 `FRONTEND_BIND_HOST=0.0.0.0` 或 `SMART_PROXY_BIND_HOST=0.0.0.0`，并配置强密码、Token 和防火墙。
+
+智能代理端口默认映射 `37890-37900`，由 `SMART_PROXY_PORT_START` 和 `SMART_PROXY_PORT_END` 控制。
 
 ## 公开订阅接口
 
@@ -194,7 +200,7 @@ MIHOMO_API_URL=http://127.0.0.1:9090
 | 系统设置 | `redis_url`、`subconverter_url`、`acl4ssr_config_url` |
 | 订阅管理 > 订阅配置 | `subscription_token`、`cache_ttl_seconds`、`traffic_poll_interval_minutes` |
 | 节点管理 > 节点池配置 | `node_filter_patterns`、`node_pool_sync_interval_minutes` |
-| 智能代理 > 全局配置 | `smart_proxy_*`、`mihomo_*`、流量保护相关设置 |
+| 智能代理 > 全局配置 | 智能代理定时任务、`mihomo_*`、流量保护相关设置；端口范围由部署环境变量控制 |
 
 `APP_ENV=development` 时，应用启动会用 `backend/.env.development` 同步 `redis_url`、`subconverter_url`、`mihomo_api_url`、`mihomo_runtime_config_path`、`mihomo_core_config_path`，避免 SQLite 中残留 Docker 服务名导致宿主机开发无法连接。
 
@@ -203,6 +209,7 @@ MIHOMO_API_URL=http://127.0.0.1:9090
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `APP_ENV` | `development` | 运行环境；Docker Compose 默认传入 `production` |
+| `ALLOW_INSECURE_DEFAULTS` | `false` | 生产环境是否允许默认弱密钥；只建议本地测试临时开启 |
 | `TZ` | `Asia/Shanghai` | 容器系统时区；后端业务时间统一使用中国时区 |
 | `SECRET_KEY` | `change-me-in-production` | JWT 签名密钥 |
 | `ADMIN_USERNAME` | `admin` | 首次初始化管理员用户名 |
@@ -219,8 +226,14 @@ MIHOMO_API_URL=http://127.0.0.1:9090
 | `MIHOMO_API_SECRET` | 空 | Mihomo API Bearer Token |
 | `MIHOMO_RUNTIME_CONFIG_PATH` | Docker: `/app/data/mihomo-runtime.yaml` | Nebula 写入 runtime YAML 的路径 |
 | `MIHOMO_CORE_CONFIG_PATH` | Docker: `/root/.config/mihomo/mihomo-runtime.yaml` | Mihomo 进程/容器内看到的同一配置路径 |
-| `SMART_PROXY_PORT_START` | `30001` | 智能代理自动分配端口起点 |
-| `SMART_PROXY_PORT_END` | `30999` | 智能代理自动分配端口终点 |
+| `INTERNAL_BIND_HOST` | `127.0.0.1` | Redis、subconverter、Mihomo API、后端 API 暴露到宿主机的绑定地址 |
+| `FRONTEND_BIND_HOST` | `127.0.0.1` | 前端管理后台暴露到宿主机的绑定地址 |
+| `BACKEND_PORT` | `8000` | 后端 API 暴露端口 |
+| `SUBCONVERTER_PORT` | `25500` | subconverter 暴露端口 |
+| `MIHOMO_API_PORT` | `9090` | Mihomo API 暴露端口 |
+| `SMART_PROXY_PORT_START` | `37890` | 智能代理自动分配端口起点 |
+| `SMART_PROXY_PORT_END` | `37900` | 智能代理自动分配端口终点 |
+| `SMART_PROXY_BIND_HOST` | `127.0.0.1` | 智能代理端口暴露到宿主机的绑定地址 |
 | `SMART_PROXY_AUTO_APPLY_INTERVAL_MINUTES` | `0` | 定时重新应用并热重载 Mihomo；`0` 关闭 |
 | `SMART_PROXY_MONITOR_INTERVAL_MINUTES` | `1` | 智能代理运行状态监控间隔；`0` 关闭 |
 | `SMART_PROXY_TRAFFIC_GUARD_ENABLED` | `true` | 是否启用智能代理流量保护 |
@@ -235,6 +248,7 @@ MIHOMO_API_URL=http://127.0.0.1:9090
 | `URL_ALLOWLIST` | 空 | 允许的订阅域名，逗号分隔；为空表示不限制域名 |
 | `RATE_LIMIT_REQUESTS` | `180` | 限流窗口内最大请求数 |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | 限流窗口秒数 |
+| `RATE_LIMIT_TRUST_PROXY_HEADERS` | `true` | 限流是否优先使用 `X-Real-IP` / `X-Forwarded-For` |
 
 ## 本地开发
 
@@ -331,6 +345,10 @@ APScheduler 启动后每分钟检查一次配置，并按设置决定是否执�
 | 智能代理应用到 Mihomo | `smart_proxy_auto_apply_interval_minutes` | `0`，关闭 |
 | 智能代理状态监控和 IP 白名单巡检 | `smart_proxy_monitor_interval_minutes` | `1` 分钟 |
 | sing-box 默认缓存预热 | 固定任务 | `30` 分钟 |
+
+## 开源协议
+
+本项目以 GNU General Public License v3.0 开源发布，详见 [LICENSE](D:/AppData/Nebula/LICENSE:1)。
 
 ## 设计边界
 

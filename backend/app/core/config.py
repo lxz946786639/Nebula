@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Nebula Subscriptions"
     APP_ENV: str = "development"
     API_PREFIX: str = "/api"
+    ALLOW_INSECURE_DEFAULTS: bool = False
 
     SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
@@ -42,8 +43,8 @@ class Settings(BaseSettings):
     MIHOMO_API_SECRET: str = ""
     MIHOMO_RUNTIME_CONFIG_PATH: str = "./data/mihomo-runtime.yaml"
     MIHOMO_CORE_CONFIG_PATH: str = "./data/mihomo-runtime.yaml"
-    SMART_PROXY_PORT_START: int = 30001
-    SMART_PROXY_PORT_END: int = 30999
+    SMART_PROXY_PORT_START: int = 37890
+    SMART_PROXY_PORT_END: int = 37900
     SMART_PROXY_AUTO_APPLY_INTERVAL_MINUTES: int = 0
     SMART_PROXY_MONITOR_INTERVAL_MINUTES: int = 1
     SMART_PROXY_TRAFFIC_GUARD_ENABLED: bool = True
@@ -58,6 +59,7 @@ class Settings(BaseSettings):
 
     RATE_LIMIT_REQUESTS: int = 180
     RATE_LIMIT_WINDOW_SECONDS: int = 60
+    RATE_LIMIT_TRUST_PROXY_HEADERS: bool = True
 
     @property
     def subconverter_base_url(self) -> str:

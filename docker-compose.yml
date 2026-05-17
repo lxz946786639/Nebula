@@ -6,7 +6,7 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
 
@@ -16,13 +16,14 @@ services:
     environment:
       TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "25500:25500"
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:${SUBCONVERTER_PORT:-25500}:25500"
 
   mihomo:
     image: metacubex/mihomo:latest
     restart: unless-stopped
     environment:
       TZ: ${TZ:-Asia/Shanghai}
+      MIHOMO_API_SECRET: ${MIHOMO_API_SECRET:-}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -38,13 +39,16 @@ services:
             'rules:' \
             '  - MATCH,DIRECT' \
             > /root/.config/mihomo/mihomo-runtime.yaml
+          if [ -n "$$MIHOMO_API_SECRET" ]; then
+            printf 'secret: %s\n' "$$MIHOMO_API_SECRET" >> /root/.config/mihomo/mihomo-runtime.yaml
+          fi
         fi
         exec /mihomo -d /root/.config/mihomo -f /root/.config/mihomo/mihomo-runtime.yaml
     volumes:
       - ./backend/data:/root/.config/mihomo
     ports:
-      - "9090:9090"
-      - "${SMART_PROXY_PORT_START:-30001}-${SMART_PROXY_PORT_END:-30999}:${SMART_PROXY_PORT_START:-30001}-${SMART_PROXY_PORT_END:-30999}"
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:${MIHOMO_API_PORT:-9090}:9090"
+      - "${SMART_PROXY_BIND_HOST:-127.0.0.1}:${SMART_PROXY_PORT_START:-37890}-${SMART_PROXY_PORT_END:-37900}:${SMART_PROXY_PORT_START:-37890}-${SMART_PROXY_PORT_END:-37900}"
 
   backend:
     build:
@@ -53,6 +57,7 @@ services:
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       APP_ENV: ${APP_ENV:-production}
+      ALLOW_INSECURE_DEFAULTS: ${ALLOW_INSECURE_DEFAULTS:-false}
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123456}
@@ -65,17 +70,18 @@ services:
       MIHOMO_API_SECRET: ${MIHOMO_API_SECRET:-}
       MIHOMO_RUNTIME_CONFIG_PATH: ${MIHOMO_RUNTIME_CONFIG_PATH:-/app/data/mihomo-runtime.yaml}
       MIHOMO_CORE_CONFIG_PATH: ${MIHOMO_CORE_CONFIG_PATH:-/root/.config/mihomo/mihomo-runtime.yaml}
-      SMART_PROXY_PORT_START: ${SMART_PROXY_PORT_START:-30001}
-      SMART_PROXY_PORT_END: ${SMART_PROXY_PORT_END:-30999}
+      SMART_PROXY_PORT_START: ${SMART_PROXY_PORT_START:-37890}
+      SMART_PROXY_PORT_END: ${SMART_PROXY_PORT_END:-37900}
       ACL4SSR_CONFIG_URL: ${ACL4SSR_CONFIG_URL:-https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online.ini}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8088,http://localhost:5173}
       CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-600}
       URL_BLOCK_PRIVATE_NETWORKS: ${URL_BLOCK_PRIVATE_NETWORKS:-true}
       URL_ALLOWLIST: ${URL_ALLOWLIST:-}
+      RATE_LIMIT_TRUST_PROXY_HEADERS: ${RATE_LIMIT_TRUST_PROXY_HEADERS:-true}
     volumes:
       - ./backend/data:/app/data
     ports:
-      - "8000:8000"
+      - "${INTERNAL_BIND_HOST:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     depends_on:
       - redis
       - subconverter
@@ -88,7 +94,7 @@ services:
     environment:
       TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "${FRONTEND_PORT:-8088}:80"
+      - "${FRONTEND_BIND_HOST:-127.0.0.1}:${FRONTEND_PORT:-8088}:80"
     depends_on:
       - backend
 

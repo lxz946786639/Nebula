@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -8,12 +9,14 @@ from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from uuid import uuid4
 
 import aiohttp
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import BACKEND_DIR
+from app.core.locks import exclusive_lock
 from app.core.timezone import as_china, now_china
 from app.models.node import Node
 from app.models.smart_proxy import SmartProxy
@@ -480,6 +483,10 @@ async def allocate_smart_proxy_port(session: AsyncSession) -> int:
 
 
 async def ensure_unique_port(session: AsyncSession, port: int, *, exclude_id: int | None = None) -> None:
+    start, end = await get_smart_proxy_port_range(session)
+    if port < start or port > end:
+        raise SmartProxyError(f"端口 {port} 不在部署映射范围 {start}-{end} 内")
+
     stmt = select(SmartProxy).where(SmartProxy.port == port)
     if exclude_id is not None:
         stmt = stmt.where(SmartProxy.id != exclude_id)
@@ -674,11 +681,22 @@ async def build_mihomo_runtime_config(session: AsyncSession) -> tuple[dict[str, 
 
 
 async def write_mihomo_runtime_config(session: AsyncSession) -> RuntimeApplyResult:
+    async with exclusive_lock("mihomo_runtime"):
+        return await _write_mihomo_runtime_config_unlocked(session)
+
+
+async def _write_mihomo_runtime_config_unlocked(session: AsyncSession) -> RuntimeApplyResult:
     config, result = await build_mihomo_runtime_config(session)
+    secret = await get_mihomo_api_secret(session)
+    if secret:
+        config["secret"] = secret
     content = dump_yaml_config(config)
     path = Path(result.config_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    if not path.exists() or path.read_text(encoding="utf-8") != content:
+        tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        tmp_path.write_text(content, encoding="utf-8")
+        os.replace(tmp_path, path)
     result.content = content
     await session.commit()
     return result
@@ -701,25 +719,26 @@ async def reload_mihomo_config(session: AsyncSession, config_path: str) -> tuple
 
 
 async def apply_mihomo_runtime(session: AsyncSession, *, reload_core: bool = False) -> RuntimeApplyResult:
-    result = await write_mihomo_runtime_config(session)
-    if reload_core:
-        core_config_path = await get_mihomo_core_config_path(session)
-        reloaded, error = await reload_mihomo_config(session, core_config_path or result.config_path)
-        result.reloaded = reloaded
-        result.error = error
-        if reloaded:
-            now = now_china()
-            proxies = list(
-                (
-                    await session.scalars(
-                        select(SmartProxy).where(SmartProxy.enabled.is_(True))
-                    )
-                ).all()
-            )
-            for proxy in proxies:
-                proxy.last_applied_at = now
-            await session.commit()
-    return result
+    async with exclusive_lock("mihomo_runtime"):
+        result = await _write_mihomo_runtime_config_unlocked(session)
+        if reload_core:
+            core_config_path = await get_mihomo_core_config_path(session)
+            reloaded, error = await reload_mihomo_config(session, core_config_path or result.config_path)
+            result.reloaded = reloaded
+            result.error = error
+            if reloaded:
+                now = now_china()
+                proxies = list(
+                    (
+                        await session.scalars(
+                            select(SmartProxy).where(SmartProxy.enabled.is_(True))
+                        )
+                    ).all()
+                )
+                for proxy in proxies:
+                    proxy.last_applied_at = now
+                await session.commit()
+        return result
 
 
 async def apply_stability_priority_runtime(
@@ -1365,10 +1384,26 @@ async def check_smart_proxy_health(
     proxy.status = str(result["status"])
     proxy.last_error = str(result["error"]) if result["error"] else None
     changed = add_smart_proxy_switch_log(session, proxy, result.get("current_node"), reason="健康检测发现当前节点变化")
+    await prune_smart_proxy_health_logs(session, proxy.id)
     await session.commit()
     if changed:
         await apply_stability_priority_runtime(session, [proxy])
     return result
+
+
+async def prune_smart_proxy_health_logs(session: AsyncSession, proxy_id: int, *, keep: int = 1000) -> None:
+    ids = list(
+        (
+            await session.scalars(
+                select(SmartProxyHealthLog.id)
+                .where(SmartProxyHealthLog.smart_proxy_id == proxy_id)
+                .order_by(SmartProxyHealthLog.id.desc())
+                .offset(keep)
+            )
+        ).all()
+    )
+    if ids:
+        await session.execute(delete(SmartProxyHealthLog).where(SmartProxyHealthLog.id.in_(ids)))
 
 
 async def refresh_smart_proxy_statuses(session: AsyncSession) -> None:

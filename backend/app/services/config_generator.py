@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 from copy import deepcopy
@@ -10,10 +11,12 @@ from urllib.parse import quote, urlencode
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import cache_get_text, cache_set_text
 from app.models.config_template import ConfigTemplate
 from app.models.node import Node
 from app.services.node_pool import sync_node_pool
 from app.services.node_processor import dump_yaml_config, load_yaml_config
+from app.services.settings import get_cache_ttl
 from app.services.subconverter import SubconverterError
 
 
@@ -279,6 +282,32 @@ async def _enabled_nodes(session: AsyncSession, *, group: str | None = None) -> 
     return list((await session.scalars(stmt)).all())
 
 
+def _node_pool_cache_key(
+    *,
+    target: str,
+    group: str | None,
+    template: str | None,
+    emoji: bool,
+    template_content: str | None,
+    nodes: list[Node],
+) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(f"{target}|{group or ''}|{template or ''}|{emoji}|".encode("utf-8"))
+    hasher.update((template_content or "").encode("utf-8"))
+    for node in nodes:
+        payload = {
+            "id": node.id,
+            "name": node.name,
+            "raw": node.raw or {},
+            "source_subscription_id": node.source_subscription_id,
+            "source_subscription_name": node.source_subscription_name,
+            "source_group": node.source_group,
+            "updated_at": node.updated_at.isoformat() if node.updated_at else None,
+        }
+        hasher.update(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8"))
+    return f"sub:pool:{target}:{hasher.hexdigest()}"
+
+
 async def build_clash_subscription_from_pool(
     session: AsyncSession,
     *,
@@ -302,7 +331,21 @@ async def build_clash_subscription_from_pool(
             raise SubconverterError(detail or "No enabled nodes found in node pool")
 
     template_content = await _template_yaml_content(session, template, target)
-    return generate_clash_config(nodes, template_content=template_content, emoji=emoji)
+    cache_key = _node_pool_cache_key(
+        target=target,
+        group=group,
+        template=template,
+        emoji=emoji,
+        template_content=template_content,
+        nodes=nodes,
+    )
+    cached = await cache_get_text(cache_key)
+    if cached is not None:
+        return cached
+
+    content = generate_clash_config(nodes, template_content=template_content, emoji=emoji)
+    await cache_set_text(cache_key, content, await get_cache_ttl(session))
+    return content
 
 
 def _trojan_link(raw: dict[str, Any], name: str) -> str | None:
@@ -462,4 +505,18 @@ async def build_v2ray_subscription_from_pool(
         if not nodes:
             detail = "; ".join(sync_result.errors[:3])
             raise SubconverterError(detail or "No enabled nodes found in node pool")
-    return generate_v2ray_subscription(nodes, emoji=emoji)
+    cache_key = _node_pool_cache_key(
+        target="v2ray",
+        group=group,
+        template=None,
+        emoji=emoji,
+        template_content=None,
+        nodes=nodes,
+    )
+    cached = await cache_get_text(cache_key)
+    if cached is not None:
+        return cached
+
+    content = generate_v2ray_subscription(nodes, emoji=emoji)
+    await cache_set_text(cache_key, content, await get_cache_ttl(session))
+    return content
