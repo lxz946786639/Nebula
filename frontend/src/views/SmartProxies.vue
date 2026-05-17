@@ -504,10 +504,26 @@
 
   <el-dialog v-model="globalConfigVisible" title="智能代理全局配置" width="760px">
     <el-form label-position="top">
+      <div class="strategy-panel">
+        <div class="strategy-panel-head">
+          <strong>部署端口范围</strong>
+          <el-tag size="small" effect="plain">
+            {{ globalConfig.smart_proxy_port_start }} - {{ globalConfig.smart_proxy_port_end }}
+          </el-tag>
+        </div>
+        <p>
+          新增智能代理未手动指定端口时，系统会在该范围内自动分配可用监听端口；编辑代理时，监听端口也会限制在这个范围内。
+        </p>
+        <p class="strategy-source-note">
+          该范围用于避免智能代理端口与其他服务冲突。已创建代理会保留自己的端口，重新应用到 Mihomo 不会自动改动现有端口。
+        </p>
+        <div class="strategy-chips">
+          <el-tag size="small" effect="plain">自动分配</el-tag>
+          <el-tag size="small" effect="plain">端口唯一</el-tag>
+          <el-tag size="small" effect="plain">编辑时受限</el-tag>
+        </div>
+      </div>
       <div class="form-grid">
-        <el-form-item label="部署端口范围">
-          <el-input :model-value="`${globalConfig.smart_proxy_port_start}-${globalConfig.smart_proxy_port_end}`" readonly />
-        </el-form-item>
         <el-form-item>
           <template #label>
             <span class="label-with-help">
