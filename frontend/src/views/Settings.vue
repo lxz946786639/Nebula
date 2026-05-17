@@ -1,0 +1,81 @@
+<template>
+  <section class="surface form-page">
+    <div class="toolbar">
+      <el-button :icon="Refresh" @click="load">刷新</el-button>
+      <el-button type="primary" :icon="Check" @click="save">保存</el-button>
+    </div>
+    <el-form class="settings-form" label-position="top">
+      <el-form-item v-for="item in items" :key="item.key" :label="settingLabel(item.key)">
+        <el-input
+          v-model="values[item.key]"
+          :type="item.secret ? 'password' : 'text'"
+          :placeholder="settingPlaceholder(item.key)"
+          :show-password="item.secret"
+        />
+        <small v-if="settingDescription(item)">{{ settingDescription(item) }}</small>
+      </el-form-item>
+    </el-form>
+  </section>
+</template>
+
+<script setup lang="ts">
+import { Check, Refresh } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { onMounted, reactive, ref } from 'vue'
+
+import http from '@/api/http'
+
+interface SettingItem {
+  key: string
+  value: string | null
+  secret: boolean
+  description?: string
+}
+
+const settingMeta: Record<string, { label: string; description: string; placeholder?: string }> = {
+  redis_url: {
+    label: 'Redis 连接地址',
+    description: 'Redis 服务连接地址，用于缓存最终配置和节点快照。',
+    placeholder: 'redis://redis:6379/0',
+  },
+  subconverter_url: {
+    label: 'subconverter 服务地址',
+    description: 'subconverter HTTP API 基础地址。',
+    placeholder: 'http://subconverter:25500',
+  },
+  acl4ssr_config_url: {
+    label: 'ACL4SSR 远程规则地址',
+    description: '默认 ACL4SSR 远程规则配置地址，用于生成转换配置。',
+    placeholder: 'https://raw.githubusercontent.com/...',
+  },
+}
+
+const items = ref<SettingItem[]>([])
+const values = reactive<Record<string, string | null>>({})
+
+function settingLabel(key: string) {
+  return settingMeta[key]?.label || key
+}
+
+function settingDescription(item: SettingItem) {
+  return settingMeta[item.key]?.description || item.description || ''
+}
+
+function settingPlaceholder(key: string) {
+  return settingMeta[key]?.placeholder || ''
+}
+
+async function load() {
+  const { data } = await http.get('/settings', { params: { scope: 'system' } })
+  items.value = data
+  for (const item of data) values[item.key] = item.value
+}
+
+async function save() {
+  await http.put('/settings', { settings: values })
+  ElMessage.success('已保存')
+  await load()
+}
+
+onMounted(load)
+</script>

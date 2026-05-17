@@ -1,0 +1,87 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+
+  subconverter:
+    image: tindy2013/subconverter:latest
+    restart: unless-stopped
+    ports:
+      - "25500:25500"
+
+  mihomo:
+    image: metacubex/mihomo:latest
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ ! -f /root/.config/mihomo/mihomo-runtime.yaml ]; then
+          printf '%s\n' \
+            'allow-lan: true' \
+            'mode: rule' \
+            'log-level: info' \
+            'external-controller: 0.0.0.0:9090' \
+            'proxies: []' \
+            'proxy-groups: []' \
+            'listeners: []' \
+            'rules:' \
+            '  - MATCH,DIRECT' \
+            > /root/.config/mihomo/mihomo-runtime.yaml
+        fi
+        exec /mihomo -d /root/.config/mihomo -f /root/.config/mihomo/mihomo-runtime.yaml
+    volumes:
+      - ./backend/data:/root/.config/mihomo
+    ports:
+      - "9090:9090"
+      - "${SMART_PROXY_PORT_START:-30001}-${SMART_PROXY_PORT_END:-30999}:${SMART_PROXY_PORT_START:-30001}-${SMART_PROXY_PORT_END:-30999}"
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123456}
+      SUBSCRIPTION_TOKEN: ${SUBSCRIPTION_TOKEN:-nebula-sub-token}
+      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:///./data/nebula.db}
+      SQL_ECHO: ${SQL_ECHO:-false}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      SUBCONVERTER_URL: ${SUBCONVERTER_URL:-http://subconverter:25500}
+      MIHOMO_API_URL: ${MIHOMO_API_URL:-http://mihomo:9090}
+      MIHOMO_API_SECRET: ${MIHOMO_API_SECRET:-}
+      MIHOMO_RUNTIME_CONFIG_PATH: ${MIHOMO_RUNTIME_CONFIG_PATH:-/app/data/mihomo-runtime.yaml}
+      MIHOMO_CORE_CONFIG_PATH: ${MIHOMO_CORE_CONFIG_PATH:-/root/.config/mihomo/mihomo-runtime.yaml}
+      SMART_PROXY_PORT_START: ${SMART_PROXY_PORT_START:-30001}
+      SMART_PROXY_PORT_END: ${SMART_PROXY_PORT_END:-30999}
+      ACL4SSR_CONFIG_URL: ${ACL4SSR_CONFIG_URL:-https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online.ini}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8088,http://localhost:5173}
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-600}
+      URL_BLOCK_PRIVATE_NETWORKS: ${URL_BLOCK_PRIVATE_NETWORKS:-true}
+      URL_ALLOWLIST: ${URL_ALLOWLIST:-}
+    volumes:
+      - ./backend/data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+      - subconverter
+      - mihomo
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8088}:80"
+    depends_on:
+      - backend
+
+volumes:
+  redis-data:
