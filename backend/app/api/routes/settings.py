@@ -1,18 +1,26 @@
+import logging
+from asyncio import TimeoutError as AsyncTimeoutError
+
+import aiohttp
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, SessionDep
-from app.core.cache import get_redis
+from app.core.cache import cache_delete_prefixes, get_redis
+from app.core.config import get_settings
+from app.core.database import AsyncSessionLocal
 from app.models.system_setting import SystemSetting
 from app.schemas.common import HealthStatus
 from app.schemas.settings import SettingBulkUpdate, SettingRead
 from app.services.audit import write_audit
 from app.services.node_pool import sync_node_pool_background
 from app.services.settings import get_subconverter_url
+from app.services.smart_proxy import refresh_smart_proxy_statuses
 from app.services.subconverter import SubconverterClient
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 SMART_PROXY_SETTING_PREFIXES = ("smart_proxy_", "mihomo_")
 HIDDEN_SETTING_KEYS = {"redis_url", "public_base_url"}
 SETTING_SCOPES = {
@@ -47,6 +55,93 @@ SETTING_LABELS = {
     "node_filter_patterns": "节点过滤通配符",
     "traffic_poll_interval_minutes": "流量刷新频率",
 }
+SECRET_KEYWORDS = ("password", "secret", "token")
+
+
+def _is_secret_setting(key: str) -> bool:
+    lowered = key.lower()
+    return any(keyword in lowered for keyword in SECRET_KEYWORDS)
+
+
+def _display_value(item: SystemSetting) -> str | None:
+    if item.secret and item.value:
+        return "********"
+    return item.value
+
+
+def _submitted_value(payload: SettingBulkUpdate, key: str, current: str | None) -> str | None:
+    if key not in payload.settings:
+        return current
+    value = payload.settings[key]
+    if value == "********":
+        return current
+    return value
+
+
+async def _assert_subconverter_available(base_url: str) -> None:
+    if not await SubconverterClient(base_url).health():
+        raise HTTPException(status_code=400, detail=f"Subconverter 服务地址不可用：{base_url}")
+
+
+async def _assert_mihomo_api_available(api_url: str, secret: str | None) -> None:
+    url = api_url.rstrip("/")
+    headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as http:
+            async with http.get(f"{url}/version") as response:
+                body = await response.text()
+                if response.status >= 400:
+                    raise HTTPException(status_code=400, detail=f"Mihomo API 地址不可用：HTTP {response.status} {body[:200]}")
+    except HTTPException:
+        raise
+    except (aiohttp.ClientError, AsyncTimeoutError) as exc:
+        raise HTTPException(status_code=400, detail=f"Mihomo API 地址不可用：{exc}") from exc
+
+
+async def _refresh_smart_proxy_statuses_background(actor: str) -> None:
+    async with AsyncSessionLocal() as session:
+        try:
+            summary = await refresh_smart_proxy_statuses(session)
+            await write_audit(
+                session,
+                actor=actor,
+                action="monitor",
+                resource="smart_proxy",
+                detail=(
+                    "Mihomo API 配置变更后刷新智能代理运行状态完成："
+                    f"状态变化 {summary.get('status_changes', 0)} 个，"
+                    f"当前节点变化 {summary.get('current_node_changes', 0)} 个，"
+                    f"关闭未授权连接 {summary.get('closed_connections', 0)} 个。"
+                ),
+            )
+            await session.commit()
+        except Exception as exc:
+            logger.info("Smart proxy status refresh after settings change skipped: %s", exc)
+
+
+async def _validate_connection_changes(
+    payload: SettingBulkUpdate,
+    items_by_key: dict[str, SystemSetting],
+) -> tuple[bool, bool]:
+    settings = get_settings()
+    current_subconverter = (items_by_key.get("subconverter_url").value if items_by_key.get("subconverter_url") else None) or settings.subconverter_base_url
+    next_subconverter = (_submitted_value(payload, "subconverter_url", current_subconverter) or settings.subconverter_base_url).rstrip("/")
+    subconverter_changed = "subconverter_url" in payload.settings and next_subconverter != current_subconverter.rstrip("/")
+    if subconverter_changed:
+        await _assert_subconverter_available(next_subconverter)
+
+    current_mihomo_url = (items_by_key.get("mihomo_api_url").value if items_by_key.get("mihomo_api_url") else None) or settings.MIHOMO_API_URL
+    current_mihomo_secret = (
+        (items_by_key.get("mihomo_api_secret").value if items_by_key.get("mihomo_api_secret") else None)
+        or settings.MIHOMO_API_SECRET
+    )
+    next_mihomo_url = (_submitted_value(payload, "mihomo_api_url", current_mihomo_url) or settings.MIHOMO_API_URL).rstrip("/")
+    next_mihomo_secret = _submitted_value(payload, "mihomo_api_secret", current_mihomo_secret) or ""
+    mihomo_changed = "mihomo_api_url" in payload.settings and next_mihomo_url != str(current_mihomo_url).rstrip("/")
+    if mihomo_changed:
+        await _assert_mihomo_api_available(next_mihomo_url, next_mihomo_secret)
+    return subconverter_changed, mihomo_changed
 
 
 async def _setting_reads(session: SessionDep, scope: str | None = None) -> list[SettingRead]:
@@ -68,8 +163,7 @@ async def _setting_reads(session: SessionDep, scope: str | None = None) -> list[
         if scope_keys is not None and item.key not in scope_keys:
             continue
         data = SettingRead.model_validate(item)
-        if item.secret and item.value:
-            data.value = "********"
+        data.value = _display_value(item)
         safe_items.append(data)
     order_map = scope_order or SETTING_ORDER
     safe_items.sort(key=lambda item: (order_map.get(item.key, len(order_map)), item.key))
@@ -92,13 +186,20 @@ async def update_settings(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> list[SettingRead]:
+    keys = set(payload.settings)
+    keys.update({"subconverter_url", "mihomo_api_url", "mihomo_api_secret"})
+    items = (await session.scalars(select(SystemSetting).where(SystemSetting.key.in_(keys)))).all()
+    items_by_key = {item.key: item for item in items}
+    subconverter_changed, mihomo_changed = await _validate_connection_changes(payload, items_by_key)
+
     changed_keys: list[str] = []
     for key, value in payload.settings.items():
-        item = await session.scalar(select(SystemSetting).where(SystemSetting.key == key))
+        item = items_by_key.get(key)
         if item is None:
-            item = SystemSetting(key=key, value=value, secret="token" in key.lower())
+            item = SystemSetting(key=key, value=value, secret=_is_secret_setting(key))
             session.add(item)
             changed_keys.append(key)
+            items_by_key[key] = item
         elif value != "********" and item.value != value:
             item.value = value
             changed_keys.append(key)
@@ -111,6 +212,16 @@ async def update_settings(
         detail=f"更新系统配置，变更字段：{changed}。",
     )
     await session.commit()
+    if subconverter_changed:
+        await cache_delete_prefixes("sub:final:", "sub:nodes:")
+        background_tasks.add_task(
+            sync_node_pool_background,
+            emoji=True,
+            actor=current_user.username,
+            reason="Subconverter 服务地址变更后同步",
+        )
+    if mihomo_changed:
+        background_tasks.add_task(_refresh_smart_proxy_statuses_background, current_user.username)
     if "node_filter_patterns" in changed_keys:
         background_tasks.add_task(
             sync_node_pool_background,

@@ -38,8 +38,8 @@ class SubconverterClient:
             timeout = aiohttp.ClientTimeout(total=5)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(f"{self.base_url}/version") as response:
-                    return response.status < 500
-        except aiohttp.ClientError:
+                    return 200 <= response.status < 400
+        except (aiohttp.ClientError, AsyncTimeoutError):
             return False
 
     async def convert(self, request: ConvertRequest) -> str:

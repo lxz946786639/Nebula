@@ -56,6 +56,25 @@ async def cache_set_text(key: str, value: str, ttl: int | None = None) -> None:
         logger.warning("Redis cache write skipped for %s: %s", key, exc)
 
 
+async def cache_delete_prefixes(*prefixes: str) -> int:
+    deleted = 0
+    if not prefixes:
+        return deleted
+    try:
+        redis = get_redis()
+        for prefix in prefixes:
+            cursor = 0
+            while True:
+                cursor, keys = await redis.scan(cursor=cursor, match=f"{prefix}*", count=500)
+                if keys:
+                    deleted += await redis.delete(*keys)
+                if cursor == 0:
+                    break
+    except RedisError as exc:
+        logger.warning("Redis cache delete skipped for prefixes %s: %s", prefixes, exc)
+    return deleted
+
+
 async def close_redis() -> None:
     global redis_client
     if redis_client is not None:
