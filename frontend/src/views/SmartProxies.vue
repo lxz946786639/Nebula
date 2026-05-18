@@ -534,7 +534,7 @@
     </template>
   </el-dialog>
 
-  <el-dialog v-model="nodePickerVisible" :title="nodePickerTitle" width="980px">
+  <el-dialog v-model="nodePickerVisible" class="node-picker-dialog" :title="nodePickerTitle" width="980px">
     <div class="node-picker-toolbar">
       <el-input v-model="nodeQ" placeholder="搜索节点/服务器/来源" clearable @change="loadNodeOptions" />
       <el-select v-model="nodeCountry" filterable clearable placeholder="国家/地区" @change="loadNodeOptions">
@@ -548,7 +548,7 @@
       <el-input v-model="nodeGroup" placeholder="分组" clearable @change="loadNodeOptions" />
       <el-button :icon="Refresh" :loading="nodePickerLoading" @click="loadNodeOptions">刷新</el-button>
     </div>
-    <el-table :data="nodeOptions" stripe height="420" empty-text="暂无可选节点">
+    <el-table class="node-picker-table" :data="nodeOptions" stripe height="420" empty-text="暂无可选节点">
       <el-table-column width="54">
         <template #default="{ row }">
           <el-checkbox
@@ -566,16 +566,60 @@
       </el-table-column>
       <el-table-column prop="server" label="服务器" min-width="180" show-overflow-tooltip class-name="table-cell-left" />
     </el-table>
-    <div class="selected-node-list picker-selected">
-      <el-tag
-        v-for="nodeId in nodeSelectionDraft"
-        :key="nodeId"
-        closable
-        effect="plain"
-        @close="toggleNodeDraft(nodeId, false)"
+    <div class="node-picker-mobile-list">
+      <el-empty v-if="!nodeOptions.length && !nodePickerLoading" description="暂无可选节点" :image-size="72" />
+      <article
+        v-for="node in nodeOptions"
+        :key="node.id"
+        class="node-picker-card"
+        :class="{ 'is-selected': nodeSelectionDraft.includes(node.id) }"
+        @click="toggleNodeDraft(node.id, !nodeSelectionDraft.includes(node.id))"
       >
-        {{ nodeLabelById(nodeId) }}
-      </el-tag>
+        <div class="node-picker-card-head">
+          <el-checkbox
+            :model-value="nodeSelectionDraft.includes(node.id)"
+            @click.stop
+            @change="handleNodeDraftChange(node.id, $event)"
+          />
+          <div class="node-picker-card-title">
+            <strong>{{ node.name }}</strong>
+            <span>{{ node.source_subscription_name || '-' }}</span>
+          </div>
+          <el-tag size="small" effect="plain">{{ node.country_code || '-' }}</el-tag>
+        </div>
+        <dl class="node-picker-card-meta">
+          <div>
+            <dt>协议</dt>
+            <dd>{{ node.type || '-' }}</dd>
+          </div>
+          <div>
+            <dt>延迟</dt>
+            <dd>{{ formatDelay(node.latency) }}</dd>
+          </div>
+          <div class="is-wide">
+            <dt>服务器</dt>
+            <dd>{{ node.server || '-' }}</dd>
+          </div>
+        </dl>
+      </article>
+    </div>
+    <div class="picker-selected">
+      <div class="picker-selected-head">
+        <span>已选节点</span>
+        <strong>{{ nodeSelectionDraft.length }}</strong>
+      </div>
+      <div class="selected-node-list picker-selected-tags" :class="{ 'is-empty': !nodeSelectionDraft.length }">
+        <span v-if="!nodeSelectionDraft.length" class="picker-selected-empty">暂无选择</span>
+        <el-tag
+          v-for="nodeId in nodeSelectionDraft"
+          :key="nodeId"
+          closable
+          effect="plain"
+          @close="toggleNodeDraft(nodeId, false)"
+        >
+          {{ nodeLabelById(nodeId) }}
+        </el-tag>
+      </div>
     </div>
     <template #footer>
       <el-button @click="nodePickerVisible = false">取消</el-button>
@@ -612,10 +656,10 @@
         <el-form-item>
           <template #label>
             <span class="label-with-help">
-              定时检查并按需应用到 Mihomo（分钟，0 表示关闭）
+              自动应用间隔（分钟）
               <el-popover placement="top" width="360" trigger="hover">
                 <template #reference>
-                  <span class="help-icon" title="查看按需应用说明">?</span>
+                  <span class="help-icon" title="0 表示关闭，开启后按需应用到 Mihomo">?</span>
                 </template>
                 <div class="strategy-help">
                   <div class="strategy-help-item">
@@ -686,49 +730,50 @@
     </el-table>
   </el-dialog>
 
-  <el-dialog v-model="healthVisible" :title="`代理诊断${selectedDiagnosisProxy ? ` - ${selectedDiagnosisProxy.name}` : ''}`" width="920px">
-    <div class="diagnosis-guide">
-      <div>
-        <strong>选择诊断方式</strong>
-        <p>运行状态读取当前 Mihomo 运行态；健康检测会对节点执行延迟和场景检测，耗时更久。</p>
+  <el-dialog v-model="healthVisible" class="diagnosis-dialog" :title="`代理诊断${selectedDiagnosisProxy ? ` - ${selectedDiagnosisProxy.name}` : ''}`" width="920px">
+    <div class="diagnosis-dialog-content">
+      <div class="diagnosis-guide">
+        <div>
+          <strong>选择诊断方式</strong>
+          <p>运行状态读取当前 Mihomo 运行态；健康检测会对节点执行延迟和场景检测，耗时更久。</p>
+        </div>
+        <div class="diagnosis-actions">
+          <el-button
+            :icon="DataAnalysis"
+            :loading="diagnosisMode === 'status'"
+            :disabled="diagnosisLoading"
+            @click="runDiagnosis('status')"
+          >
+            只看运行状态
+          </el-button>
+          <el-button
+            :icon="Refresh"
+            :loading="diagnosisMode === 'health'"
+            :disabled="diagnosisLoading"
+            @click="runDiagnosis('health')"
+          >
+            只做健康检测
+          </el-button>
+          <el-button
+            type="primary"
+            :icon="DataAnalysis"
+            :loading="diagnosisMode === 'all'"
+            :disabled="diagnosisLoading"
+            @click="runDiagnosis('all')"
+          >
+            全部执行
+          </el-button>
+        </div>
       </div>
-      <div class="diagnosis-actions">
-        <el-button
-          :icon="DataAnalysis"
-          :loading="diagnosisMode === 'status'"
-          :disabled="diagnosisLoading"
-          @click="runDiagnosis('status')"
-        >
-          只看运行状态
-        </el-button>
-        <el-button
-          :icon="Refresh"
-          :loading="diagnosisMode === 'health'"
-          :disabled="diagnosisLoading"
-          @click="runDiagnosis('health')"
-        >
-          只做健康检测
-        </el-button>
-        <el-button
-          type="primary"
-          :icon="DataAnalysis"
-          :loading="diagnosisMode === 'all'"
-          :disabled="diagnosisLoading"
-          @click="runDiagnosis('all')"
-        >
-          全部执行
-        </el-button>
-      </div>
-    </div>
-    <el-empty
-      v-if="!selectedStatus && !selectedHealth && !diagnosisLoading"
-      description="请选择上方诊断方式"
-    />
-    <template v-if="selectedStatus">
-      <div class="toolbar diagnosis-section-title">
-        <h3>运行状态</h3>
-      </div>
-      <el-descriptions :column="3" border style="margin-bottom: 14px">
+      <el-empty
+        v-if="!selectedStatus && !selectedHealth && !diagnosisLoading"
+        description="请选择上方诊断方式"
+      />
+      <template v-if="selectedStatus">
+        <div class="toolbar diagnosis-section-title">
+          <h3>运行状态</h3>
+        </div>
+        <el-descriptions class="diagnosis-desktop-block" :column="3" border style="margin-bottom: 14px">
         <el-descriptions-item label="代理">{{ selectedStatus.name }}</el-descriptions-item>
         <el-descriptions-item label="状态">
           <el-tag :type="statusTag(selectedStatus.status)">{{ runtimeStatusText(selectedStatus.status) }}</el-tag>
@@ -754,20 +799,29 @@
         <el-descriptions-item label="策略组">{{ selectedStatus.group_name }}</el-descriptions-item>
         <el-descriptions-item label="错误">{{ statusMessageText(selectedStatus.error) }}</el-descriptions-item>
         <el-descriptions-item label="来源 IP" :span="3">{{ selectedStatus.source_ips.length ? selectedStatus.source_ips.join(', ') : '-' }}</el-descriptions-item>
-      </el-descriptions>
-      <el-alert
-        v-if="selectedStatus.traffic_reasons?.length"
-        type="warning"
-        :closable="false"
-        style="margin-bottom: 14px"
-        :title="trafficReasonsText(selectedStatus.traffic_reasons)"
-      />
-    </template>
-    <template v-if="selectedHealth">
-      <div class="toolbar diagnosis-section-title">
-        <h3>健康检测</h3>
-      </div>
-      <el-descriptions :column="3" border style="margin-bottom: 14px">
+        </el-descriptions>
+        <div class="diagnosis-mobile-grid diagnosis-mobile-only">
+          <div v-for="item in runtimeDiagnosisItems" :key="item.label" class="diagnosis-kv-card" :class="{ 'is-wide': item.wide }">
+            <span>{{ item.label }}</span>
+            <div class="diagnosis-kv-value">
+              <strong>{{ item.value }}</strong>
+              <el-tag v-if="item.badgeText" :type="item.tagType" effect="plain">{{ item.badgeText }}</el-tag>
+            </div>
+          </div>
+        </div>
+        <el-alert
+          v-if="selectedStatus.traffic_reasons?.length"
+          type="warning"
+          :closable="false"
+          style="margin-bottom: 14px"
+          :title="trafficReasonsText(selectedStatus.traffic_reasons)"
+        />
+      </template>
+      <template v-if="selectedHealth">
+        <div class="toolbar diagnosis-section-title">
+          <h3>健康检测</h3>
+        </div>
+        <el-descriptions class="diagnosis-desktop-block" :column="3" border style="margin-bottom: 14px">
         <el-descriptions-item label="代理">{{ selectedHealth.name }}</el-descriptions-item>
         <el-descriptions-item label="状态">
             <el-tag :type="statusTag(selectedHealth.status)">{{ readableStatusText(selectedHealth.status) }}</el-tag>
@@ -778,8 +832,17 @@
         <el-descriptions-item label="最优节点">{{ selectedHealth.best_node || '-' }}</el-descriptions-item>
         <el-descriptions-item label="当前节点" :span="2">{{ selectedHealth.current_node || '-' }}</el-descriptions-item>
         <el-descriptions-item label="错误">{{ statusMessageText(selectedHealth.error) }}</el-descriptions-item>
-      </el-descriptions>
-      <el-table :data="selectedHealth.checks" stripe max-height="220" style="margin-bottom: 14px">
+        </el-descriptions>
+        <div class="diagnosis-mobile-grid diagnosis-mobile-only">
+          <div v-for="item in healthDiagnosisItems" :key="item.label" class="diagnosis-kv-card" :class="{ 'is-wide': item.wide }">
+            <span>{{ item.label }}</span>
+            <div class="diagnosis-kv-value">
+              <strong>{{ item.value }}</strong>
+              <el-tag v-if="item.badgeText" :type="item.tagType" effect="plain">{{ item.badgeText }}</el-tag>
+            </div>
+          </div>
+        </div>
+        <el-table class="diagnosis-desktop-block" :data="selectedHealth.checks" stripe max-height="220" style="margin-bottom: 14px">
         <el-table-column label="检测项" width="120">
           <template #default="{ row }">{{ checkTypeText(row.check_type) }}</template>
         </el-table-column>
@@ -794,8 +857,26 @@
         <el-table-column label="说明" min-width="220" show-overflow-tooltip class-name="table-cell-left">
           <template #default="{ row }">{{ statusMessageText(row.message) }}</template>
         </el-table-column>
-      </el-table>
-      <el-table :data="selectedHealth.nodes" stripe max-height="320">
+        </el-table>
+        <div class="diagnosis-mobile-list diagnosis-mobile-only">
+          <article v-for="check in selectedHealth.checks" :key="check.check_type" class="diagnosis-result-card">
+            <div class="diagnosis-result-head">
+              <strong>{{ checkTypeText(check.check_type) }}</strong>
+              <el-tag :type="statusTag(check.status)" effect="plain">{{ readableStatusText(check.status) }}</el-tag>
+            </div>
+            <dl class="diagnosis-card-kv">
+              <div>
+                <dt>延迟</dt>
+                <dd>{{ formatDelay(check.delay) }}</dd>
+              </div>
+              <div>
+                <dt>说明</dt>
+                <dd>{{ statusMessageText(check.message) }}</dd>
+              </div>
+            </dl>
+          </article>
+        </div>
+        <el-table class="diagnosis-desktop-block" :data="selectedHealth.nodes" stripe max-height="320">
         <el-table-column prop="name" label="节点" min-width="260" show-overflow-tooltip class-name="table-cell-left" />
         <el-table-column prop="source" label="来源" width="110" />
         <el-table-column prop="type" label="协议" width="90" />
@@ -810,20 +891,47 @@
         <el-table-column label="当前" width="80">
           <template #default="{ row }">{{ row.current ? '是' : '-' }}</template>
         </el-table-column>
-      </el-table>
-      <div class="diagnosis-log-entry">
-        <el-button :icon="DataAnalysis" @click="healthLogsVisible = true">
-          查看最近检测日志（{{ healthLogs.length }}）
-        </el-button>
-      </div>
-    </template>
+        </el-table>
+        <div class="diagnosis-mobile-list diagnosis-mobile-only">
+          <article v-for="node in selectedHealth.nodes" :key="`${node.node_id || node.name}-${node.source || ''}`" class="diagnosis-result-card">
+            <div class="diagnosis-result-head">
+              <strong>{{ node.name }}</strong>
+              <el-tag :type="statusTag(node.status)" effect="plain">{{ readableStatusText(node.status) }}</el-tag>
+            </div>
+            <dl class="diagnosis-card-kv">
+              <div>
+                <dt>来源</dt>
+                <dd>{{ node.source || '-' }}</dd>
+              </div>
+              <div>
+                <dt>协议</dt>
+                <dd>{{ node.type || '-' }}</dd>
+              </div>
+              <div>
+                <dt>延迟</dt>
+                <dd>{{ formatDelay(node.delay) }}</dd>
+              </div>
+              <div>
+                <dt>当前</dt>
+                <dd>{{ node.current ? '是' : '-' }}</dd>
+              </div>
+            </dl>
+          </article>
+        </div>
+        <div class="diagnosis-log-entry">
+          <el-button :icon="DataAnalysis" @click="healthLogsVisible = true">
+            查看最近检测日志（{{ healthLogs.length }}）
+          </el-button>
+        </div>
+      </template>
+    </div>
     <template #footer>
       <el-button @click="healthVisible = false">关闭</el-button>
     </template>
   </el-dialog>
 
-  <el-dialog v-model="healthLogsVisible" title="最近检测日志" width="860px">
-    <el-table :data="healthLogs" stripe max-height="460" empty-text="暂无检测日志">
+  <el-dialog v-model="healthLogsVisible" class="health-logs-dialog" title="最近检测日志" width="860px">
+    <el-table class="diagnosis-desktop-block" :data="healthLogs" stripe max-height="460" empty-text="暂无检测日志">
       <el-table-column prop="created_at" label="时间" width="180">
         <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
       </el-table-column>
@@ -840,6 +948,33 @@
         <template #default="{ row }">{{ formatDelay(row.latency) }}</template>
       </el-table-column>
     </el-table>
+    <div class="diagnosis-mobile-list diagnosis-mobile-only">
+      <el-empty v-if="!healthLogs.length" description="暂无检测日志" :image-size="72" />
+      <article v-for="log in healthLogs" :key="log.id" class="diagnosis-result-card">
+        <div class="diagnosis-result-head">
+          <strong>{{ checkTypeText(log.check_type) }}</strong>
+          <el-tag :type="statusTag(log.status)" effect="plain">{{ readableStatusText(log.status) }}</el-tag>
+        </div>
+        <dl class="diagnosis-card-kv">
+          <div>
+            <dt>时间</dt>
+            <dd>{{ formatDateTime(log.created_at) }}</dd>
+          </div>
+          <div>
+            <dt>节点</dt>
+            <dd>{{ log.node_name || '-' }}</dd>
+          </div>
+          <div>
+            <dt>延迟</dt>
+            <dd>{{ formatDelay(log.latency) }}</dd>
+          </div>
+          <div>
+            <dt>说明</dt>
+            <dd>{{ statusMessageText(log.message) }}</dd>
+          </div>
+        </dl>
+      </article>
+    </div>
     <template #footer>
       <el-button @click="healthLogsVisible = false">关闭</el-button>
     </template>
@@ -1061,6 +1196,14 @@ interface SmartProxySwitchLog {
   created_at: string
 }
 
+interface DiagnosisDisplayItem {
+  label: string
+  value: string
+  badgeText?: string
+  tagType?: string
+  wide?: boolean
+}
+
 interface SmartProxyGlobalConfig {
   smart_proxy_port_start: number
   smart_proxy_port_end: number
@@ -1274,6 +1417,49 @@ const strategyNodeLabel = computed(() => {
   return '策略节点范围'
 })
 const nodePickerTitle = computed(() => (nodePickerMode.value === 'strategy' ? `选择${strategyNodeLabel.value}` : '选择节点来源'))
+const runtimeDiagnosisItems = computed<DiagnosisDisplayItem[]>(() => {
+  const status = selectedStatus.value
+  if (!status) return []
+
+  return [
+    { label: '代理', value: status.name, badgeText: runtimeStatusText(status.status), tagType: statusTag(status.status), wide: true },
+    { label: '当前节点', value: status.current_node || '-', wide: true },
+    { label: '延迟', value: formatDelay(status.delay) },
+    { label: '候选节点', value: `${status.candidate_nodes}` },
+    { label: '运行节点', value: `${status.runtime_nodes}` },
+    { label: '在线节点', value: `${status.online_nodes}` },
+    { label: '失败节点', value: `${status.failed_nodes}` },
+    { label: '平均延迟', value: formatDelay(status.average_delay) },
+    { label: '最优节点', value: status.best_node || '-', wide: true },
+    { label: '活动连接', value: `${status.active_connections}` },
+    { label: '在线来源', value: `${status.online_users}` },
+    { label: '上传速率', value: formatRate(status.upload_speed) },
+    { label: '下载速率', value: formatRate(status.download_speed) },
+    { label: '切换次数', value: `${status.switch_count}` },
+    { label: '未授权连接', value: `${status.unauthorized_connections}` },
+    { label: '流量保护', value: status.traffic_guard_enabled ? '开启' : '关闭' },
+    { label: '流量排除', value: `${status.traffic_excluded_nodes}` },
+    { label: '低流量风险', value: `${status.traffic_risk_nodes}` },
+    { label: '流量快照', value: status.traffic_snapshot_at ? formatDateTime(status.traffic_snapshot_at) : '-', wide: true },
+    { label: '策略组', value: status.group_name, wide: true },
+    { label: '错误', value: statusMessageText(status.error), wide: true },
+    { label: '来源 IP', value: status.source_ips.length ? status.source_ips.join(', ') : '-', wide: true },
+  ]
+})
+const healthDiagnosisItems = computed<DiagnosisDisplayItem[]>(() => {
+  const health = selectedHealth.value
+  if (!health) return []
+
+  return [
+    { label: '代理', value: health.name, badgeText: readableStatusText(health.status), tagType: statusTag(health.status), wide: true },
+    { label: '检测时间', value: formatDateTime(health.checked_at), wide: true },
+    { label: '在线', value: `${health.online_nodes}/${health.total_nodes}` },
+    { label: '平均延迟', value: formatDelay(health.average_delay) },
+    { label: '最优节点', value: health.best_node || '-', wide: true },
+    { label: '当前节点', value: health.current_node || '-', wide: true },
+    { label: '错误', value: statusMessageText(health.error), wide: true },
+  ]
+})
 const runtimeStatusOptions = [
   {
     value: 'running',
@@ -2401,6 +2587,119 @@ onBeforeUnmount(() => {
   margin-top: 14px;
 }
 
+.diagnosis-dialog-content {
+  min-width: 0;
+}
+
+.diagnosis-mobile-only {
+  display: none;
+}
+
+.diagnosis-mobile-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.diagnosis-kv-card,
+.diagnosis-result-card {
+  min-width: 0;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.diagnosis-kv-card {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 10px;
+}
+
+.diagnosis-kv-card.is-wide {
+  grid-column: 1 / -1;
+}
+
+.diagnosis-kv-card span,
+.diagnosis-card-kv dt {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.diagnosis-kv-card strong,
+.diagnosis-card-kv dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.diagnosis-kv-value {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.diagnosis-kv-value strong {
+  flex: 1 1 auto;
+}
+
+.diagnosis-kv-value .el-tag {
+  flex: 0 0 auto;
+}
+
+.diagnosis-mobile-list {
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.diagnosis-result-card {
+  padding: 12px;
+}
+
+.diagnosis-result-head {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.diagnosis-result-head strong {
+  min-width: 0;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.diagnosis-result-head .el-tag {
+  flex: 0 0 auto;
+}
+
+.diagnosis-card-kv {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.diagnosis-card-kv div {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.diagnosis-card-kv dt {
+  margin: 0;
+}
+
 .strategy-panel {
   margin: 0 0 14px;
   padding: 12px 14px;
@@ -2478,19 +2777,40 @@ onBeforeUnmount(() => {
   margin-bottom: 12px;
 }
 
+.node-picker-mobile-list {
+  display: none;
+}
+
 .node-picker-toolbar .el-input,
 .node-picker-toolbar .el-select {
   width: 220px;
 }
 
 .picker-selected {
+  display: grid;
+  gap: 8px;
   min-height: 32px;
+  margin-top: 10px;
+}
+
+.picker-selected-head {
+  display: none;
+}
+
+.picker-selected-tags {
+  margin-top: 0;
+}
+
+.picker-selected-empty {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 
 .label-with-help {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 
 .help-icon {
@@ -2543,11 +2863,268 @@ onBeforeUnmount(() => {
   .toolbar-label-short {
     display: inline;
   }
+
+  .diagnosis-guide {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .diagnosis-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    justify-content: stretch;
+  }
+
+  .diagnosis-actions :deep(.el-button),
+  .diagnosis-log-entry :deep(.el-button) {
+    width: 100%;
+    min-width: 0;
+    min-height: 38px;
+    margin-left: 0;
+    padding-right: 8px;
+    padding-left: 8px;
+    white-space: nowrap;
+  }
+
+  .diagnosis-actions :deep(.el-button:last-child:nth-child(odd)) {
+    grid-column: 1 / -1;
+  }
+
+  .diagnosis-actions :deep(.el-button > span),
+  .diagnosis-log-entry :deep(.el-button > span) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .diagnosis-log-entry {
+    justify-content: stretch;
+  }
+
+  .diagnosis-section-title {
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .diagnosis-desktop-block {
+    display: none;
+  }
+
+  .diagnosis-mobile-grid.diagnosis-mobile-only {
+    display: grid;
+  }
+
+  .diagnosis-mobile-list.diagnosis-mobile-only {
+    display: grid;
+  }
+
+  .node-picker-dialog :deep(.el-dialog__body) {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+  }
+
+  .node-picker-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 112px;
+    gap: 8px;
+    align-items: stretch;
+    margin-bottom: 12px;
+  }
+
+  .node-picker-toolbar > .el-input:first-child,
+  .node-picker-toolbar > .el-select {
+    grid-column: 1 / -1;
+  }
+
+  .node-picker-toolbar .el-input,
+  .node-picker-toolbar .el-select,
+  .node-picker-toolbar :deep(.el-button) {
+    width: 100%;
+    min-width: 0;
+    min-height: 38px;
+  }
+
+  .node-picker-table {
+    display: none;
+  }
+
+  .node-picker-mobile-list {
+    display: grid;
+    flex: 1 1 auto;
+    gap: 10px;
+    min-height: 260px;
+    overflow: auto;
+    padding-right: 2px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .node-picker-card {
+    min-width: 0;
+    border: 1px solid var(--el-border-color);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+    padding: 12px;
+    transition:
+      border-color 0.16s ease,
+      background-color 0.16s ease;
+  }
+
+  .node-picker-card.is-selected {
+    border-color: var(--el-color-primary);
+    background: color-mix(in srgb, var(--el-color-primary) 9%, var(--el-fill-color-lighter));
+  }
+
+  .node-picker-card-head {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: start;
+  }
+
+  .node-picker-card-title {
+    min-width: 0;
+  }
+
+  .node-picker-card-title strong,
+  .node-picker-card-title span {
+    display: block;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .node-picker-card-title strong {
+    color: var(--el-text-color-primary);
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .node-picker-card-title span {
+    margin-top: 3px;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .node-picker-card-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 12px 0 0;
+  }
+
+  .node-picker-card-meta div {
+    min-width: 0;
+  }
+
+  .node-picker-card-meta .is-wide {
+    grid-column: 1 / -1;
+  }
+
+  .node-picker-card-meta dt,
+  .node-picker-card-meta dd {
+    margin: 0;
+    min-width: 0;
+    line-height: 1.4;
+  }
+
+  .node-picker-card-meta dt {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+  }
+
+  .node-picker-card-meta dd {
+    margin-top: 3px;
+    color: var(--el-text-color-primary);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .picker-selected {
+    flex: 0 0 auto;
+    margin-top: 12px;
+    padding: 10px;
+    border: 1px solid var(--el-border-color);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+  }
+
+  .picker-selected-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+  }
+
+  .picker-selected-head strong {
+    color: var(--el-color-primary);
+    font-size: 13px;
+  }
+
+  .picker-selected-tags {
+    max-height: 104px;
+    margin-top: 8px;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .picker-selected-tags .el-tag {
+    max-width: 100%;
+  }
+
+  .picker-selected-tags .el-tag :deep(.el-tag__content) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .picker-selected-tags.is-empty {
+    min-height: 24px;
+    align-items: center;
+  }
+
+  .node-picker-dialog :deep(.el-dialog__footer) {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    gap: 10px;
+  }
+
+  .node-picker-dialog :deep(.el-dialog__footer .el-button) {
+    width: 100%;
+    margin-left: 0;
+  }
 }
 
 @media (max-width: 360px) {
   .smart-proxy-toolbar-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .diagnosis-mobile-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .diagnosis-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .node-picker-toolbar,
+  .node-picker-card-meta,
+  .node-picker-dialog :deep(.el-dialog__footer) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .node-picker-toolbar > .el-input,
+  .node-picker-toolbar > .el-select {
+    grid-column: 1 / -1;
   }
 }
 </style>

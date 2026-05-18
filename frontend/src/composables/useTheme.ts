@@ -3,6 +3,10 @@ import { computed, readonly, ref } from 'vue'
 type ThemeMode = 'dark' | 'light'
 
 const STORAGE_KEY = 'nebula-theme'
+const THEME_COLORS: Record<ThemeMode, string> = {
+  dark: '#0f1216',
+  light: '#f6f8fb',
+}
 const theme = ref<ThemeMode>('dark')
 let initialized = false
 
@@ -23,6 +27,10 @@ function applyTheme(mode: ThemeMode) {
   root.dataset.theme = mode
   root.classList.toggle('dark', mode === 'dark')
   root.classList.toggle('light', mode === 'light')
+
+  document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((meta) => {
+    meta.content = THEME_COLORS[mode]
+  })
 }
 
 function setTheme(mode: ThemeMode, persist = true) {

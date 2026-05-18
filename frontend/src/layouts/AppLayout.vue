@@ -53,8 +53,8 @@
         </div>
       </div>
       <div class="sidebar-footer">
-        <div class="sidebar-version">
-          <span>版本号</span>
+        <div class="sidebar-version" :title="`当前版本 v${appVersion}`">
+          <span>版本</span>
           <strong>v{{ appVersion }}</strong>
         </div>
       </div>
@@ -66,6 +66,7 @@
           <h1>{{ title }}</h1>
         </div>
         <div class="topbar-actions">
+          <PwaInstallButton placement="bottom" />
           <ThemeToggle placement="bottom" label="主题" />
           <div class="ws-status" :class="`is-${socketStatus}`" :title="socketTitle">
             <span class="ws-status-dot"></span>
@@ -99,6 +100,7 @@ import { ElMessageBox } from 'element-plus'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import PwaInstallButton from '@/components/PwaInstallButton.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useStatusSocket } from '@/composables/useStatusSocket'
 import { useAuthStore } from '@/stores/auth'
@@ -106,7 +108,7 @@ import { useAuthStore } from '@/stores/auth'
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const appVersion = __APP_VERSION__
+const appVersion = typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.1.0'
 const navRef = ref<HTMLElement | null>(null)
 const canScrollNavLeft = ref(false)
 const canScrollNavRight = ref(false)

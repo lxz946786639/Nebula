@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
 app = FastAPI(
     title=settings.APP_NAME,
-    version="1.0.1",
+    version="1.1.0",
     description="Modern subscription aggregation and conversion platform powered by subconverter.",
     lifespan=lifespan,
 )

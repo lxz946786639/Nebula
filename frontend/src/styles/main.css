@@ -228,30 +228,29 @@ nav a.router-link-active {
 }
 
 .sidebar-footer {
-  padding: 10px 8px 2px;
+  padding: 8px 8px 1px;
 }
 
 .sidebar-version {
-  display: flex;
-  gap: 6px;
+  display: inline-flex;
+  gap: 3px;
   align-items: center;
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
   white-space: nowrap;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.52;
 }
 
 .sidebar-version span,
 .sidebar-version strong {
   display: inline;
-}
-
-.sidebar-version span {
-  font-size: 12px;
+  font-size: inherit;
 }
 
 .sidebar-version strong {
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
+  color: color-mix(in srgb, var(--muted) 82%, var(--text));
+  font-weight: 400;
 }
 
 .sidebar-actions {
@@ -404,6 +403,7 @@ nav a.router-link-active {
   display: none;
 }
 
+.topbar-actions .pwa-install-button,
 .topbar-actions .theme-toggle-button {
   width: 34px;
   height: 34px;
@@ -432,6 +432,8 @@ nav a.router-link-active {
   margin-left: 0;
 }
 
+.topbar-actions .pwa-install-button:hover,
+.topbar-actions .pwa-install-button:focus,
 .topbar-actions .theme-toggle-button:hover,
 .topbar-actions .theme-toggle-button:focus {
   color: var(--accent);
@@ -1389,6 +1391,7 @@ small {
     gap: 8px;
   }
 
+  .topbar-actions .pwa-install-button,
   .topbar-actions .theme-toggle-button {
     width: 36px;
     min-width: 36px;
@@ -1595,6 +1598,28 @@ small {
   .el-message-box {
     width: calc(100vw - 24px) !important;
     max-width: 420px;
+  }
+
+  .is-message-box .el-overlay-message-box {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100dvh;
+    padding: calc(16px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .is-message-box .el-overlay-message-box::after {
+    display: none;
+  }
+
+  .el-message-box__btns {
+    gap: 8px;
+  }
+
+  .el-message-box__btns .el-button {
+    min-width: 88px;
+    min-height: 38px;
+    margin-left: 0;
   }
 
   .url-row {
