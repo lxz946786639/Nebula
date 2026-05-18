@@ -147,12 +147,16 @@ async def get_smart_proxy_port_range(session: AsyncSession) -> tuple[int, int]:
 
 async def get_mihomo_api_url(session: AsyncSession) -> str:
     settings = get_settings()
+    if settings.APP_ENV == "development":
+        return settings.MIHOMO_API_URL.rstrip("/")
     value = await get_setting(session, "mihomo_api_url", settings.MIHOMO_API_URL)
     return (value or settings.MIHOMO_API_URL).rstrip("/")
 
 
 async def get_mihomo_api_secret(session: AsyncSession) -> str:
     settings = get_settings()
+    if settings.APP_ENV == "development":
+        return settings.MIHOMO_API_SECRET
     return await get_setting(session, "mihomo_api_secret", settings.MIHOMO_API_SECRET) or settings.MIHOMO_API_SECRET
 
 

@@ -8,6 +8,7 @@ class SettingRead(BaseModel):
     value: str | None
     secret: bool
     description: str | None
+    read_only: bool = False
 
 
 class SettingUpdate(BaseModel):

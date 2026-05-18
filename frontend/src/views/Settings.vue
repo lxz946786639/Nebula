@@ -11,6 +11,7 @@
           :type="item.secret ? 'password' : 'text'"
           :placeholder="settingPlaceholder(item.key)"
           :show-password="item.secret"
+          :disabled="item.read_only"
         />
         <small v-if="settingDescription(item)">{{ settingDescription(item) }}</small>
       </el-form-item>
@@ -30,6 +31,7 @@ interface SettingItem {
   value: string | null
   secret: boolean
   description?: string
+  read_only?: boolean
 }
 
 const settingMeta: Record<string, { label: string; description: string; placeholder?: string }> = {
@@ -73,7 +75,9 @@ function settingLabel(key: string) {
 }
 
 function settingDescription(item: SettingItem) {
-  return settingMeta[item.key]?.description || item.description || ''
+  const base = settingMeta[item.key]?.description || item.description || ''
+  const readOnlyNote = item.read_only ? '本地开发环境下此配置由环境变量控制，页面只读。' : ''
+  return [base, readOnlyNote].filter(Boolean).join(' ')
 }
 
 function settingPlaceholder(key: string) {
@@ -87,7 +91,11 @@ async function load() {
 }
 
 async function save() {
-  await http.put('/settings', { settings: values })
+  const payload: Record<string, string | null> = {}
+  for (const item of items.value) {
+    if (!item.read_only) payload[item.key] = values[item.key]
+  }
+  await http.put('/settings', { settings: payload })
   ElMessage.success('已保存')
   await load()
 }

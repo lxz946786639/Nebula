@@ -23,6 +23,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 SMART_PROXY_SETTING_PREFIXES = ("smart_proxy_", "mihomo_")
 HIDDEN_SETTING_KEYS = {"redis_url", "public_base_url"}
+DEVELOPMENT_READ_ONLY_SETTING_KEYS = {"subconverter_url", "mihomo_api_url", "mihomo_api_secret"}
 SETTING_SCOPES = {
     "system": (
         "subscription_public_base_url",
@@ -58,15 +59,36 @@ SETTING_LABELS = {
 SECRET_KEYWORDS = ("password", "secret", "token")
 
 
+def _is_development() -> bool:
+    return get_settings().APP_ENV == "development"
+
+
+def _read_only_setting_keys() -> set[str]:
+    return DEVELOPMENT_READ_ONLY_SETTING_KEYS if _is_development() else set()
+
+
 def _is_secret_setting(key: str) -> bool:
     lowered = key.lower()
     return any(keyword in lowered for keyword in SECRET_KEYWORDS)
 
 
-def _display_value(item: SystemSetting) -> str | None:
-    if item.secret and item.value:
+def _effective_setting_value(key: str, item: SystemSetting | None) -> str | None:
+    settings = get_settings()
+    if _is_development():
+        if key == "subconverter_url":
+            return settings.subconverter_base_url
+        if key == "mihomo_api_url":
+            return settings.MIHOMO_API_URL.rstrip("/")
+        if key == "mihomo_api_secret":
+            return settings.MIHOMO_API_SECRET
+    return item.value if item is not None else None
+
+
+def _display_value(key: str, item: SystemSetting) -> str | None:
+    value = _effective_setting_value(key, item)
+    if (item.secret or _is_secret_setting(key)) and value:
         return "********"
-    return item.value
+    return value
 
 
 def _submitted_value(payload: SettingBulkUpdate, key: str, current: str | None) -> str | None:
@@ -99,6 +121,20 @@ async def _assert_mihomo_api_available(api_url: str, secret: str | None) -> None
         raise HTTPException(status_code=400, detail=f"Mihomo API 地址不可用：{exc}") from exc
 
 
+def _assert_read_only_settings_unchanged(
+    payload: SettingBulkUpdate,
+    items_by_key: dict[str, SystemSetting],
+) -> None:
+    for key in set(payload.settings) & _read_only_setting_keys():
+        value = payload.settings[key]
+        if value == "********":
+            continue
+        effective_value = _effective_setting_value(key, items_by_key.get(key))
+        if (value or "") != (effective_value or ""):
+            label = SETTING_LABELS.get(key, key)
+            raise HTTPException(status_code=400, detail=f"{label} 在本地开发环境中由环境变量控制，不能在系统设置中修改")
+
+
 async def _refresh_smart_proxy_statuses_background(actor: str) -> None:
     async with AsyncSessionLocal() as session:
         try:
@@ -125,9 +161,14 @@ async def _validate_connection_changes(
     items_by_key: dict[str, SystemSetting],
 ) -> tuple[bool, bool]:
     settings = get_settings()
+    read_only_keys = _read_only_setting_keys()
     current_subconverter = (items_by_key.get("subconverter_url").value if items_by_key.get("subconverter_url") else None) or settings.subconverter_base_url
     next_subconverter = (_submitted_value(payload, "subconverter_url", current_subconverter) or settings.subconverter_base_url).rstrip("/")
-    subconverter_changed = "subconverter_url" in payload.settings and next_subconverter != current_subconverter.rstrip("/")
+    subconverter_changed = (
+        "subconverter_url" in payload.settings
+        and "subconverter_url" not in read_only_keys
+        and next_subconverter != current_subconverter.rstrip("/")
+    )
     if subconverter_changed:
         await _assert_subconverter_available(next_subconverter)
 
@@ -138,7 +179,17 @@ async def _validate_connection_changes(
     )
     next_mihomo_url = (_submitted_value(payload, "mihomo_api_url", current_mihomo_url) or settings.MIHOMO_API_URL).rstrip("/")
     next_mihomo_secret = _submitted_value(payload, "mihomo_api_secret", current_mihomo_secret) or ""
-    mihomo_changed = "mihomo_api_url" in payload.settings and next_mihomo_url != str(current_mihomo_url).rstrip("/")
+    mihomo_url_changed = (
+        "mihomo_api_url" in payload.settings
+        and "mihomo_api_url" not in read_only_keys
+        and next_mihomo_url != str(current_mihomo_url).rstrip("/")
+    )
+    mihomo_secret_changed = (
+        "mihomo_api_secret" in payload.settings
+        and "mihomo_api_secret" not in read_only_keys
+        and next_mihomo_secret != (current_mihomo_secret or "")
+    )
+    mihomo_changed = mihomo_url_changed or mihomo_secret_changed
     if mihomo_changed:
         await _assert_mihomo_api_available(next_mihomo_url, next_mihomo_secret)
     return subconverter_changed, mihomo_changed
@@ -163,7 +214,9 @@ async def _setting_reads(session: SessionDep, scope: str | None = None) -> list[
         if scope_keys is not None and item.key not in scope_keys:
             continue
         data = SettingRead.model_validate(item)
-        data.value = _display_value(item)
+        data.secret = item.secret or _is_secret_setting(item.key)
+        data.value = _display_value(item.key, item)
+        data.read_only = item.key in _read_only_setting_keys()
         safe_items.append(data)
     order_map = scope_order or SETTING_ORDER
     safe_items.sort(key=lambda item: (order_map.get(item.key, len(order_map)), item.key))
@@ -190,10 +243,14 @@ async def update_settings(
     keys.update({"subconverter_url", "mihomo_api_url", "mihomo_api_secret"})
     items = (await session.scalars(select(SystemSetting).where(SystemSetting.key.in_(keys)))).all()
     items_by_key = {item.key: item for item in items}
+    _assert_read_only_settings_unchanged(payload, items_by_key)
     subconverter_changed, mihomo_changed = await _validate_connection_changes(payload, items_by_key)
 
     changed_keys: list[str] = []
+    read_only_keys = _read_only_setting_keys()
     for key, value in payload.settings.items():
+        if key in read_only_keys:
+            continue
         item = items_by_key.get(key)
         if item is None:
             item = SystemSetting(key=key, value=value, secret=_is_secret_setting(key))
