@@ -34,10 +34,6 @@
         <template #default="{ row }">
           <div class="endpoint-list">
             <div v-for="endpoint in endpointOptions(row)" :key="endpoint.scheme" class="endpoint-row">
-              <el-tag class="endpoint-tag" size="small" effect="plain">{{ endpoint.label }}</el-tag>
-              <el-tooltip :content="endpoint.url" placement="top">
-                <span class="endpoint-text">{{ endpoint.url }}</span>
-              </el-tooltip>
               <el-button
                 :icon="DocumentCopy"
                 circle
@@ -45,6 +41,10 @@
                 :title="`复制${endpoint.label}地址`"
                 @click="copy(endpoint.url)"
               />
+              <el-tag class="endpoint-tag" size="small" effect="plain">{{ endpoint.label }}</el-tag>
+              <el-tooltip :content="endpoint.url" placement="top">
+                <span class="endpoint-text">{{ endpoint.url }}</span>
+              </el-tooltip>
             </div>
           </div>
         </template>
@@ -2227,7 +2227,7 @@ onBeforeUnmount(() => {
 
 .endpoint-row {
   display: grid;
-  grid-template-columns: 68px minmax(0, 1fr) 28px;
+  grid-template-columns: 28px 68px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   min-height: 28px;
