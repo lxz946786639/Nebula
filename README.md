@@ -4,7 +4,7 @@ Nebula Subscriptions 是一个自托管的代理订阅聚合与智能代理管�
 
 它适合需要同时管理多个订阅源、统一生成客户端订阅地址、查看节点和流量状态，并为局域网设备或应用提供稳定代理入口的个人或小团队使用。
 
-当前版本：`v1.0.0`
+当前版本：`v1.0.1`
 
 开源协议：GNU General Public License v3.0，详见 [LICENSE](LICENSE)。
 
@@ -18,6 +18,15 @@ Nebula Subscriptions 是一个自托管的代理订阅聚合与智能代理管�
 - 智能调度：按订阅、国家/地区、标签或手动节点选择代理候选，并支持故障转移、测速选择、稳定优先等策略。
 - 流量保护：订阅到期或流量用完后，可自动避开不可用节点；订阅恢复后可自动重新纳入候选。
 - Web 管理后台：提供订阅、节点、智能代理、配置、日志和实时状态页面。
+
+## v1.0.1 更新要点
+
+- 系统设置拆分「订阅公开访问地址」和「代理公开访问地址」，适配管理后台、订阅接口和代理端口不同的部署方式。
+- Redis 地址从页面隐藏，固定为部署环境配置；subconverter 和 Mihomo API 移入系统设置，生产环境修改前会先连通性检测。
+- 本地开发环境中 subconverter 和 Mihomo API 配置由环境变量控制，页面只读，避免误把 Docker 内网地址写入开发配置。
+- Docker 默认不暴露 Redis、subconverter、Mihomo API 到宿主机；本机调试可叠加 `docker-compose.debug.yml`。
+- 智能代理页面和首页完整展示 Mixed 代理的 HTTP(S) 与 SOCKS5 地址，并优化复制体验。
+- 订阅到期、失效或流量耗尽时，智能代理会在必要时检测节点并按冷却策略自动重新应用 Mihomo runtime。
 
 ## 快速开始
 
@@ -118,6 +127,37 @@ SMART_PROXY_BIND_HOST=0.0.0.0
 
 开放到局域网前请确认已设置强密码、随机 Token，并配置好防火墙。
 
+## 生产环境更新
+
+进入部署目录后按顺序执行：
+
+```bash
+cd /opt/Nebula
+
+# 备份生产配置和运行数据
+cp .env .env.bak.$(date +%Y%m%d%H%M%S)
+tar -czf nebula-data-bak-$(date +%Y%m%d%H%M%S).tar.gz backend/data
+
+# 拉取新版本并检查 Compose 配置
+git pull --ff-only
+docker compose config --quiet
+
+# 重建并滚动更新容器
+docker compose up -d --build
+
+# 查看运行状态
+docker compose ps
+docker compose logs -f backend
+```
+
+如果只更新前后端镜像，也可以执行：
+
+```bash
+docker compose up -d --build backend frontend
+```
+
+但当 `docker-compose.yml`、环境变量或运行时相关配置发生变化时，建议使用完整的 `docker compose up -d --build`。不要用新的 `.env.example` 直接覆盖生产 `.env`，只对照新增配置补齐。
+
 ## 本地开发
 
 本地开发通常是在宿主机运行后端和前端，同时用 Docker 启动依赖服务。因为默认部署不会把内部依赖端口暴露到宿主机，所以开发时需要叠加调试 Compose 文件：
@@ -167,6 +207,22 @@ MIHOMO_API_URL=http://127.0.0.1:9090
 ```
 
 如果没有叠加 `docker-compose.debug.yml`，宿主机后端无法访问这些 `127.0.0.1` 调试端口。
+
+`APP_ENV=development` 时，系统设置中的 `subconverter_url`、`mihomo_api_url`、`mihomo_api_secret` 会以环境变量为准，页面只读；生产环境才允许在页面修改这些连接地址。
+
+## 系统设置
+
+系统设置用于维护运行后的业务配置：
+
+| 配置 | 说明 |
+| --- | --- |
+| 订阅公开访问地址 | 用于首页和 WebSocket 推送里的客户端订阅地址；留空时按当前访问地址生成 |
+| 代理公开访问地址 | 用于智能代理和首页代理地址；只填域名时保留每个代理自己的端口，填写端口时统一使用该公开端口 |
+| subconverter 服务地址 | 生产环境可修改，保存前会检测新地址是否可用；修改成功后会清理订阅缓存并触发节点池同步 |
+| Mihomo API 地址 / 密钥 | 生产环境可修改，保存前会检测 `/version`；修改成功后会刷新智能代理运行状态 |
+| ACL4SSR 远程规则地址 | 默认规则模板和转换链路使用的远程规则配置 |
+
+Redis 连接地址不在页面中维护，只能在部署时通过 `REDIS_URL` 配置。
 
 ## 常用配置
 
