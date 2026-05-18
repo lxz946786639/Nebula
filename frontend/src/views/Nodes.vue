@@ -156,7 +156,7 @@ async function load() {
 async function loadNodeSettings() {
   settingsLoading.value = true
   try {
-    const { data } = await http.get<SettingItem[]>('/settings', { params: { scope: 'node' } })
+    const { data } = await http.get<SettingItem[]>('/settings', { params: { scope: 'node_pool' } })
     nodeSettings.value = data
     for (const item of data) nodeValues[item.key] = item.value
   } finally {

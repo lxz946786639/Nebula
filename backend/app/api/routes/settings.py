@@ -17,6 +17,7 @@ SMART_PROXY_SETTING_PREFIXES = ("smart_proxy_", "mihomo_")
 SETTING_SCOPES = {
     "system": {"redis_url", "subconverter_url", "acl4ssr_config_url"},
     "subscription": {"subscription_token", "cache_ttl_seconds", "traffic_poll_interval_minutes"},
+    "node_pool": {"node_filter_patterns"},
     "node": {"node_filter_patterns"},
 }
 SETTING_LABELS = {
