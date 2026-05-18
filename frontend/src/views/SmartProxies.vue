@@ -30,19 +30,22 @@
       <el-table-column label="策略" width="120">
         <template #default="{ row }">{{ strategyLabel(row.strategy, row.stability_priority) }}</template>
       </el-table-column>
-      <el-table-column label="代理地址" min-width="280">
+      <el-table-column label="代理地址" min-width="360">
         <template #default="{ row }">
-          <div class="endpoint-cell">
-            <el-tooltip :content="row.endpoint" placement="top">
-              <span class="endpoint-text">{{ row.endpoint }}</span>
-            </el-tooltip>
-            <el-button
-              :icon="DocumentCopy"
-              circle
-              size="small"
-              title="复制代理地址"
-              @click="copy(row.endpoint)"
-            />
+          <div class="endpoint-list">
+            <div v-for="endpoint in endpointOptions(row)" :key="endpoint.scheme" class="endpoint-row">
+              <el-tag class="endpoint-tag" size="small" effect="plain">{{ endpoint.label }}</el-tag>
+              <el-tooltip :content="endpoint.url" placement="top">
+                <span class="endpoint-text">{{ endpoint.url }}</span>
+              </el-tooltip>
+              <el-button
+                :icon="DocumentCopy"
+                circle
+                size="small"
+                :title="`复制${endpoint.label}地址`"
+                @click="copy(endpoint.url)"
+              />
+            </div>
           </div>
         </template>
       </el-table-column>
@@ -1272,6 +1275,23 @@ function typeLabel(value: string) {
   return 'HTTP'
 }
 
+function endpointWithScheme(endpoint: string, scheme: 'http' | 'socks5') {
+  return endpoint.replace(/^[a-z][a-z0-9+.-]*:\/\//i, `${scheme}://`)
+}
+
+function endpointOptions(row: SmartProxy) {
+  if (row.proxy_type === 'mixed') {
+    return [
+      { label: 'HTTP(S)', scheme: 'http', url: endpointWithScheme(row.endpoint, 'http') },
+      { label: 'SOCKS5', scheme: 'socks5', url: endpointWithScheme(row.endpoint, 'socks5') },
+    ]
+  }
+  if (row.proxy_type === 'socks') {
+    return [{ label: 'SOCKS5', scheme: 'socks5', url: endpointWithScheme(row.endpoint, 'socks5') }]
+  }
+  return [{ label: 'HTTP(S)', scheme: 'http', url: endpointWithScheme(row.endpoint, 'http') }]
+}
+
 function strategyLabel(value: string, stabilityPriority = false) {
   if (stabilityPriority && ['select', 'fallback'].includes(value)) return '稳定优先'
   return strategyOptions.find((item) => item.value === value)?.label || value
@@ -2200,11 +2220,22 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-.endpoint-cell {
+.endpoint-list {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.endpoint-row {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) 28px;
   align-items: center;
   gap: 8px;
+  min-height: 28px;
+}
+
+.endpoint-tag {
+  width: 68px;
+  justify-content: center;
 }
 
 .endpoint-text {
