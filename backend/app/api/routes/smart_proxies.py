@@ -55,8 +55,6 @@ from app.services.smart_proxy import (
     write_mihomo_runtime_config,
 )
 from app.services.settings import (
-    get_mihomo_api_secret,
-    get_mihomo_api_url,
     get_mihomo_core_config_path,
     get_mihomo_runtime_config_path,
     get_smart_proxy_auto_apply_interval_minutes,
@@ -70,8 +68,6 @@ logger = logging.getLogger(__name__)
 GLOBAL_CONFIG_KEYS = {
     "smart_proxy_auto_apply_interval_minutes",
     "smart_proxy_monitor_interval_minutes",
-    "mihomo_api_url",
-    "mihomo_api_secret",
     "mihomo_runtime_config_path",
     "mihomo_core_config_path",
     "smart_proxy_traffic_guard_enabled",
@@ -88,8 +84,6 @@ GLOBAL_CONFIG_LABELS = {
     "exclude_unknown_traffic": "排除未知流量订阅",
     "smart_proxy_auto_apply_interval_minutes": "按需应用检查频率",
     "smart_proxy_monitor_interval_minutes": "运行状态监控频率",
-    "mihomo_api_url": "Mihomo API 地址",
-    "mihomo_api_secret": "Mihomo API 密钥",
     "mihomo_runtime_config_path": "运行时配置路径",
     "mihomo_core_config_path": "核心配置路径",
     "smart_proxy_traffic_guard_enabled": "流量保护开关",
@@ -349,8 +343,6 @@ async def _global_config(session: SessionDep) -> SmartProxyGlobalConfig:
         smart_proxy_port_end=port_end,
         smart_proxy_auto_apply_interval_minutes=await get_smart_proxy_auto_apply_interval_minutes(session),
         smart_proxy_monitor_interval_minutes=await get_smart_proxy_monitor_interval_minutes(session),
-        mihomo_api_url=await get_mihomo_api_url(session),
-        mihomo_api_secret=await get_mihomo_api_secret(session),
         mihomo_runtime_config_path=await get_mihomo_runtime_config_path(session),
         mihomo_core_config_path=await get_mihomo_core_config_path(session),
         traffic_guard_enabled=policy.traffic_guard_enabled,

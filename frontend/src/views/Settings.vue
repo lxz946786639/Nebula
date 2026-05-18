@@ -33,11 +33,6 @@ interface SettingItem {
 }
 
 const settingMeta: Record<string, { label: string; description: string; placeholder?: string }> = {
-  redis_url: {
-    label: 'Redis 连接地址',
-    description: 'Redis 服务连接地址，用于缓存最终配置和节点快照。',
-    placeholder: 'redis://redis:6379/0',
-  },
   subscription_public_base_url: {
     label: '订阅公开访问地址',
     description: '用于生成客户端订阅地址；留空时使用当前访问地址。建议填写完整 http(s)://域名[:端口]。',
@@ -52,6 +47,16 @@ const settingMeta: Record<string, { label: string; description: string; placehol
     label: 'subconverter 服务地址',
     description: 'subconverter HTTP API 基础地址。',
     placeholder: 'http://subconverter:25500',
+  },
+  mihomo_api_url: {
+    label: 'Mihomo API 地址',
+    description: 'Nebula 访问 Mihomo External Controller 的地址，Docker 部署默认使用容器内网地址。',
+    placeholder: 'http://mihomo:9090',
+  },
+  mihomo_api_secret: {
+    label: 'Mihomo API 密钥',
+    description: 'Mihomo External Controller 的访问密钥；未配置密钥时可留空。',
+    placeholder: '留空表示不使用密钥',
   },
   acl4ssr_config_url: {
     label: 'ACL4SSR 远程规则地址',

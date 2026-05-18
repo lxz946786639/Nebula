@@ -14,12 +14,14 @@ from app.services.subconverter import SubconverterClient
 
 router = APIRouter()
 SMART_PROXY_SETTING_PREFIXES = ("smart_proxy_", "mihomo_")
+HIDDEN_SETTING_KEYS = {"redis_url", "public_base_url"}
 SETTING_SCOPES = {
     "system": (
         "subscription_public_base_url",
         "proxy_public_base_url",
-        "redis_url",
         "subconverter_url",
+        "mihomo_api_url",
+        "mihomo_api_secret",
         "acl4ssr_config_url",
     ),
     "subscription": ("subscription_token", "cache_ttl_seconds", "traffic_poll_interval_minutes"),
@@ -37,6 +39,8 @@ SETTING_LABELS = {
     "subscription_public_base_url": "订阅公开访问地址",
     "proxy_public_base_url": "代理公开访问地址",
     "subconverter_url": "Subconverter 地址",
+    "mihomo_api_url": "Mihomo API 地址",
+    "mihomo_api_secret": "Mihomo API 密钥",
     "acl4ssr_config_url": "ACL4SSR 远程规则地址",
     "subscription_token": "订阅访问 Token",
     "cache_ttl_seconds": "缓存有效期",
@@ -57,7 +61,9 @@ async def _setting_reads(session: SessionDep, scope: str | None = None) -> list[
     items = (await session.scalars(select(SystemSetting).order_by(SystemSetting.key.asc()))).all()
     safe_items = []
     for item in items:
-        if item.key.startswith(SMART_PROXY_SETTING_PREFIXES):
+        if item.key in HIDDEN_SETTING_KEYS:
+            continue
+        if item.key.startswith(SMART_PROXY_SETTING_PREFIXES) and item.key not in SETTING_ORDER:
             continue
         if scope_keys is not None and item.key not in scope_keys:
             continue

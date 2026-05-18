@@ -558,12 +558,6 @@
           <el-input-number v-model="globalConfig.smart_proxy_monitor_interval_minutes" :min="0" style="width: 100%" />
         </el-form-item>
       </div>
-      <el-form-item label="Mihomo API 地址">
-        <el-input v-model="globalConfig.mihomo_api_url" />
-      </el-form-item>
-      <el-form-item label="Mihomo API 密钥">
-        <el-input v-model="globalConfig.mihomo_api_secret" show-password />
-      </el-form-item>
       <div class="form-grid">
         <el-form-item label="Nebula 写入路径">
           <el-input v-model="globalConfig.mihomo_runtime_config_path" />
@@ -989,8 +983,6 @@ interface SmartProxyGlobalConfig {
   smart_proxy_port_end: number
   smart_proxy_auto_apply_interval_minutes: number
   smart_proxy_monitor_interval_minutes: number
-  mihomo_api_url: string
-  mihomo_api_secret: string
   mihomo_runtime_config_path: string
   mihomo_core_config_path: string
   traffic_guard_enabled: boolean
@@ -1105,8 +1097,6 @@ const globalConfig = reactive<SmartProxyGlobalConfig>({
   smart_proxy_port_end: 37900,
   smart_proxy_auto_apply_interval_minutes: 0,
   smart_proxy_monitor_interval_minutes: 1,
-  mihomo_api_url: '',
-  mihomo_api_secret: '',
   mihomo_runtime_config_path: '',
   mihomo_core_config_path: '',
   traffic_guard_enabled: true,
@@ -2026,8 +2016,6 @@ async function saveGlobalConfig() {
   const payload = {
     smart_proxy_auto_apply_interval_minutes: globalConfig.smart_proxy_auto_apply_interval_minutes,
     smart_proxy_monitor_interval_minutes: globalConfig.smart_proxy_monitor_interval_minutes,
-    mihomo_api_url: globalConfig.mihomo_api_url,
-    mihomo_api_secret: globalConfig.mihomo_api_secret,
     mihomo_runtime_config_path: globalConfig.mihomo_runtime_config_path,
     mihomo_core_config_path: globalConfig.mihomo_core_config_path,
     traffic_guard_enabled: globalConfig.traffic_guard_enabled,

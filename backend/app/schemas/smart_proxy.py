@@ -105,8 +105,6 @@ class SmartProxyGlobalConfig(BaseModel):
     smart_proxy_port_end: int
     smart_proxy_auto_apply_interval_minutes: int
     smart_proxy_monitor_interval_minutes: int
-    mihomo_api_url: str
-    mihomo_api_secret: str = ""
     mihomo_runtime_config_path: str
     mihomo_core_config_path: str
     traffic_guard_enabled: bool
@@ -120,8 +118,6 @@ class SmartProxyGlobalConfig(BaseModel):
 class SmartProxyGlobalConfigUpdate(BaseModel):
     smart_proxy_auto_apply_interval_minutes: int | None = None
     smart_proxy_monitor_interval_minutes: int | None = None
-    mihomo_api_url: str | None = None
-    mihomo_api_secret: str | None = None
     mihomo_runtime_config_path: str | None = None
     mihomo_core_config_path: str | None = None
     traffic_guard_enabled: bool | None = None
