@@ -32,12 +32,7 @@ SETTING_LABELS = {
 }
 
 
-@router.get("", response_model=list[SettingRead])
-async def list_settings(
-    session: SessionDep,
-    current_user: CurrentUser,
-    scope: str | None = Query(default=None),
-) -> list[SettingRead]:
+async def _setting_reads(session: SessionDep, scope: str | None = None) -> list[SettingRead]:
     scope_keys = None
     if scope:
         scope_keys = SETTING_SCOPES.get(scope)
@@ -55,6 +50,15 @@ async def list_settings(
             data.value = "********"
         safe_items.append(data)
     return safe_items
+
+
+@router.get("", response_model=list[SettingRead])
+async def list_settings(
+    session: SessionDep,
+    current_user: CurrentUser,
+    scope: str | None = Query(default=None),
+) -> list[SettingRead]:
+    return await _setting_reads(session, scope)
 
 
 @router.put("", response_model=list[SettingRead])
@@ -90,7 +94,7 @@ async def update_settings(
             actor=current_user.username,
             reason="节点过滤配置变更后同步",
         )
-    return await list_settings(session, current_user)
+    return await _setting_reads(session)
 
 
 @router.get("/health", response_model=HealthStatus)
