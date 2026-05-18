@@ -1,16 +1,31 @@
 <template>
   <section class="surface list-page">
     <div class="toolbar">
-      <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
-        <el-button type="primary" :icon="Plus" @click="openCreate">新增代理</el-button>
+      <div class="toolbar-actions smart-proxy-toolbar-actions">
+        <el-button type="primary" :icon="Plus" @click="openCreate">
+          <span class="toolbar-label-full">新增代理</span>
+          <span class="toolbar-label-short">新增</span>
+        </el-button>
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-        <el-button :icon="Setting" @click="openGlobalConfig">全局配置</el-button>
-        <el-button type="success" :icon="Switch" :loading="reloading" title="重新生成全部智能代理配置并热重载 Mihomo" @click="confirmReloadRuntime">重新应用到 Mihomo</el-button>
-        <el-button :icon="DataAnalysis" :loading="reloading" title="预览即将写入 Mihomo 的 Runtime 配置" @click="reloadRuntime(false)">预览配置</el-button>
-        <el-button :icon="Lock" :loading="enforcingAccess" @click="enforceAccess">访问检查</el-button>
+        <el-button :icon="Setting" @click="openGlobalConfig">
+          <span class="toolbar-label-full">全局配置</span>
+          <span class="toolbar-label-short">配置</span>
+        </el-button>
+        <el-button type="success" :icon="Switch" :loading="reloading" title="重新生成全部智能代理配置并热重载 Mihomo" @click="confirmReloadRuntime">
+          <span class="toolbar-label-full">应用到 Mihomo</span>
+          <span class="toolbar-label-short">应用</span>
+        </el-button>
+        <el-button :icon="DataAnalysis" :loading="reloading" title="预览即将写入 Mihomo 的 Runtime 配置" @click="reloadRuntime(false)">
+          <span class="toolbar-label-full">预览配置</span>
+          <span class="toolbar-label-short">预览</span>
+        </el-button>
+        <el-button :icon="Lock" :loading="enforcingAccess" @click="enforceAccess">
+          <span class="toolbar-label-full">访问检查</span>
+          <span class="toolbar-label-short">检查</span>
+        </el-button>
       </div>
     </div>
-    <el-descriptions :column="4" border style="margin-bottom: 14px">
+    <el-descriptions class="desktop-summary" :column="4" border style="margin-bottom: 14px">
       <el-descriptions-item label="Mihomo">
         <el-tag :type="coreStatus.available ? 'success' : 'danger'">{{ coreStatusText(coreStatus.available) }}</el-tag>
       </el-descriptions-item>
@@ -22,7 +37,25 @@
       <el-descriptions-item label="内存">{{ coreStatus.memory ? formatBytes(coreStatus.memory) : '-' }}</el-descriptions-item>
       <el-descriptions-item label="API">{{ coreStatus.api_url || '-' }}</el-descriptions-item>
     </el-descriptions>
-    <el-table class="list-table" :data="items" stripe height="100%" empty-text="暂无代理服务">
+    <div class="mobile-summary-grid">
+      <div class="mobile-summary-item">
+        <span>Mihomo</span>
+        <strong>{{ coreStatusText(coreStatus.available) }}</strong>
+      </div>
+      <div class="mobile-summary-item">
+        <span>连接</span>
+        <strong>{{ coreStatus.active_connections }}</strong>
+      </div>
+      <div class="mobile-summary-item">
+        <span>上传</span>
+        <strong>{{ formatRate(coreStatus.upload_speed) }}</strong>
+      </div>
+      <div class="mobile-summary-item">
+        <span>下载</span>
+        <strong>{{ formatRate(coreStatus.download_speed) }}</strong>
+      </div>
+    </div>
+    <el-table class="list-table desktop-table" :data="items" stripe height="100%" empty-text="暂无代理服务">
       <el-table-column prop="name" label="代理名称" min-width="160" />
       <el-table-column label="类型" width="100">
         <template #default="{ row }">{{ typeLabel(row.proxy_type) }}</template>
@@ -127,6 +160,54 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="mobile-card-list">
+      <el-empty v-if="!items.length" description="暂无代理服务" :image-size="72" />
+      <article v-for="row in items" v-else :key="row.id" class="mobile-card">
+        <div class="mobile-card-head">
+          <div class="mobile-card-title">
+            <strong>{{ row.name }}</strong>
+            <span>{{ typeLabel(row.proxy_type) }} · {{ strategyLabel(row.strategy, row.stability_priority) }}</span>
+          </div>
+          <el-tag :type="runtimeStatusTag(row)" effect="plain">{{ runtimeStatusLabel(row) }}</el-tag>
+        </div>
+        <div class="mobile-card-meta">
+          <el-tag size="small" :type="applyStatusType(row)" effect="plain">{{ applyStatusLabel(row) }}</el-tag>
+          <el-tag size="small" effect="plain">候选 {{ row.candidate_nodes }}</el-tag>
+          <el-button link type="primary" @click="showSwitchLogs(row)">切换 {{ row.switch_count }}</el-button>
+        </div>
+        <div class="endpoint-list mobile-endpoint-list">
+          <div v-for="endpoint in endpointOptions(row)" :key="endpoint.scheme" class="endpoint-row">
+            <el-tag class="endpoint-tag" size="small" effect="plain">{{ endpoint.label }}</el-tag>
+            <span class="endpoint-text">{{ endpoint.url }}</span>
+            <el-button
+              class="endpoint-copy"
+              :icon="DocumentCopy"
+              circle
+              size="small"
+              :title="`复制${endpoint.label}地址`"
+              @click="copy(endpoint.url)"
+            />
+          </div>
+        </div>
+        <dl class="mobile-kv">
+          <div>
+            <dt>当前节点</dt>
+            <dd>{{ row.current_node || '-' }}</dd>
+          </div>
+          <div>
+            <dt>说明</dt>
+            <dd>{{ applyStatusReason(row) }}</dd>
+          </div>
+        </dl>
+        <div class="mobile-card-actions">
+          <el-button :icon="Edit" @click="openEdit(row)">编辑</el-button>
+          <el-button :icon="DataAnalysis" @click="openDiagnosis(row)">诊断</el-button>
+          <el-button v-if="row.enabled" :icon="VideoPause" type="warning" @click="stopProxy(row)">停用</el-button>
+          <el-button v-else :icon="VideoPlay" type="success" @click="startProxy(row)">启用</el-button>
+          <el-button :icon="Delete" type="danger" @click="deleteProxy(row)">删除</el-button>
+        </div>
+      </article>
+    </div>
   </section>
 
   <el-dialog v-model="dialogVisible" :title="editingId ? '编辑代理' : '新增代理'" width="980px">
@@ -1421,7 +1502,7 @@ function applyStatusReason(row: SmartProxy) {
   if (row.last_error) return statusMessageText(row.last_error)
   const reasons: Record<string, string> = {
     applied: '当前配置已成功应用到 Mihomo。',
-    pending: '代理配置尚未应用到 Mihomo，请点击顶部“重新应用到 Mihomo”。',
+    pending: '代理配置尚未应用到 Mihomo，请点击顶部“应用到 Mihomo”。',
     failed: '代理已应用，但运行状态异常，请查看运行状态或健康检测。',
     disabled: '代理未启用，不会出现在 Mihomo 运行配置中。',
   }
@@ -1477,7 +1558,7 @@ async function currentAutoApplyHint() {
   } catch {
     // Ignore config read failures; the save flow can still continue.
   }
-  return '选择“仅保存”后，需要手动点击顶部“重新应用到 Mihomo”才会热重载。'
+  return '选择“仅保存”后，需要手动点击顶部“应用到 Mihomo”才会热重载。'
 }
 
 async function chooseApplyBeforeSave() {
@@ -2146,6 +2227,23 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.smart-proxy-toolbar-actions {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.smart-proxy-toolbar-actions :deep(.el-button) {
+  min-height: 32px;
+  padding-right: 11px;
+  padding-left: 11px;
+  margin-left: 0;
+}
+
+.toolbar-label-short {
+  display: none;
+}
+
 .smart-proxy-mode {
   margin-bottom: 14px;
 }
@@ -2424,5 +2522,32 @@ onBeforeUnmount(() => {
 .strategy-option small {
   color: var(--el-text-color-secondary);
   line-height: 1.4;
+}
+
+@media (max-width: 880px) {
+  .smart-proxy-toolbar-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .smart-proxy-toolbar-actions :deep(.el-button) {
+    min-height: 36px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .toolbar-label-full {
+    display: none;
+  }
+
+  .toolbar-label-short {
+    display: inline;
+  }
+}
+
+@media (max-width: 360px) {
+  .smart-proxy-toolbar-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

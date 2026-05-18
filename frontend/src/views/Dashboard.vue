@@ -52,7 +52,7 @@
         <div class="toolbar">
           <h2>服务状态</h2>
         </div>
-        <el-descriptions :column="2" border>
+        <el-descriptions class="desktop-summary" :column="2" border>
           <el-descriptions-item label="Redis">
             <el-tag :type="statusTag(stats.redis_status)">{{ statusText(stats.redis_status) }}</el-tag>
           </el-descriptions-item>
@@ -66,6 +66,32 @@
           <el-descriptions-item label="最近更新">{{ formatDateTime(stats.last_updated_at) }}</el-descriptions-item>
           <el-descriptions-item label="流量采集">{{ formatDateTime(stats.traffic.polled_at) }}</el-descriptions-item>
         </el-descriptions>
+        <div class="mobile-summary-grid dashboard-service-grid">
+          <div class="mobile-summary-item">
+            <span>Redis</span>
+            <strong><el-tag class="dashboard-status-tag" :type="statusTag(stats.redis_status)">{{ statusText(stats.redis_status) }}</el-tag></strong>
+          </div>
+          <div class="mobile-summary-item">
+            <span>subconverter</span>
+            <strong><el-tag class="dashboard-status-tag" :type="statusTag(stats.subconverter_status)">{{ statusText(stats.subconverter_status) }}</el-tag></strong>
+          </div>
+          <div class="mobile-summary-item">
+            <span>Mihomo</span>
+            <strong><el-tag class="dashboard-status-tag" :type="statusTag(stats.mihomo_status)">{{ statusText(stats.mihomo_status) }}</el-tag></strong>
+          </div>
+          <div class="mobile-summary-item">
+            <span>Mihomo 版本</span>
+            <strong>{{ stats.mihomo_version || '-' }}</strong>
+          </div>
+          <div class="mobile-summary-item">
+            <span>最近更新</span>
+            <strong>{{ formatDateTime(stats.last_updated_at) }}</strong>
+          </div>
+          <div class="mobile-summary-item">
+            <span>流量采集</span>
+            <strong>{{ formatDateTime(stats.traffic.polled_at) }}</strong>
+          </div>
+        </div>
       </section>
 
       <section class="surface dashboard-subscription-panel">

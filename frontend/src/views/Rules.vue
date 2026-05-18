@@ -4,7 +4,7 @@
       <span></span>
       <el-button type="primary" :icon="Plus" @click="openCreate">新增规则</el-button>
     </div>
-    <el-table class="list-table" :data="items" stripe height="100%">
+    <el-table class="list-table desktop-table" :data="items" stripe height="100%">
       <el-table-column prop="name" label="名称" min-width="180" />
       <el-table-column prop="remote_config_url" label="远程配置" min-width="260" show-overflow-tooltip />
       <el-table-column label="默认" width="90">
@@ -19,6 +19,32 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="mobile-card-list">
+      <el-empty v-if="!items.length" description="暂无规则" :image-size="72" />
+      <article v-for="row in items" v-else :key="row.id" class="mobile-card">
+        <div class="mobile-card-head">
+          <div class="mobile-card-title">
+            <strong>{{ row.name }}</strong>
+            <span>{{ row.description || '未填写描述' }}</span>
+          </div>
+          <el-tag v-if="row.is_default" type="success" effect="plain">默认</el-tag>
+        </div>
+        <dl class="mobile-kv">
+          <div>
+            <dt>远程配置</dt>
+            <dd>{{ row.remote_config_url || '-' }}</dd>
+          </div>
+          <div>
+            <dt>YAML</dt>
+            <dd>{{ row.yaml_content ? '已填写本地内容' : '未填写' }}</dd>
+          </div>
+        </dl>
+        <div class="mobile-card-actions">
+          <el-button :icon="Edit" @click="openEdit(row)">编辑</el-button>
+          <el-button :icon="Delete" type="danger" @click="remove(row.id)">删除</el-button>
+        </div>
+      </article>
+    </div>
   </section>
 
   <el-dialog v-model="visible" :title="editingId ? '编辑规则' : '新增规则'" width="760px">

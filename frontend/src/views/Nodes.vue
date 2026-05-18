@@ -1,24 +1,24 @@
 <template>
   <section class="surface list-page">
     <div class="toolbar">
-      <div style="display: flex; gap: 10px; flex-wrap: wrap">
-        <el-input v-model="q" placeholder="搜索" clearable style="width: 220px" @change="load" />
-        <el-input v-model="country" placeholder="国家/地区" clearable style="width: 160px" @change="load" />
-        <el-input v-model="group" placeholder="分组" clearable style="width: 160px" @change="load" />
-        <el-select v-model="enabledFilter" placeholder="状态" style="width: 130px" @change="load">
+      <div class="toolbar-filters">
+        <el-input v-model="q" class="toolbar-filter-search" placeholder="搜索" clearable @change="load" />
+        <el-input v-model="country" class="toolbar-filter-compact" placeholder="国家/地区" clearable @change="load" />
+        <el-input v-model="group" class="toolbar-filter-compact" placeholder="分组" clearable @change="load" />
+        <el-select v-model="enabledFilter" class="toolbar-filter-status" placeholder="状态" @change="load">
           <el-option label="全部状态" value="" />
           <el-option label="已启用" value="true" />
           <el-option label="已停用" value="false" />
         </el-select>
       </div>
-      <div style="display: flex; gap: 10px">
+      <div class="toolbar-actions">
         <el-button :icon="Setting" :loading="settingsLoading" @click="openNodeSettings">节点池配置</el-button>
         <el-button :icon="Refresh" @click="load">重新加载</el-button>
         <el-button :icon="Connection" :loading="testing" @click="testLatency">一键测速</el-button>
         <el-button type="primary" :icon="Refresh" :loading="syncing" @click="refreshPool">同步节点池</el-button>
       </div>
     </div>
-    <el-table class="list-table" :data="nodes" stripe height="100%" empty-text="暂无节点，点击同步节点池">
+    <el-table class="list-table desktop-table" :data="nodes" stripe height="100%" empty-text="暂无节点，点击同步节点池">
       <el-table-column label="启用" width="86">
         <template #default="{ row }">
           <el-switch v-model="row.enabled" @change="() => updateEnabled(row)" />
@@ -65,6 +65,49 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="mobile-card-list">
+      <el-empty v-if="!nodes.length" description="暂无节点，点击同步节点池" :image-size="72" />
+      <article v-for="row in nodes" v-else :key="row.id" class="mobile-card">
+        <div class="mobile-card-head">
+          <div class="mobile-card-title">
+            <strong>{{ row.name }}</strong>
+            <span>{{ row.server || '-' }}{{ row.port ? `:${row.port}` : '' }}</span>
+          </div>
+          <el-switch v-model="row.enabled" @change="() => updateEnabled(row)" />
+        </div>
+        <div class="mobile-card-meta">
+          <el-tag size="small" effect="plain">{{ row.type || '-' }}</el-tag>
+          <el-tag v-if="row.country_code" size="small" effect="plain">{{ row.country_code }}</el-tag>
+          <el-tag v-if="row.latency !== null && row.latency !== undefined" size="small" :type="latencyTag(row.latency)" effect="plain">
+            {{ row.latency }} ms
+          </el-tag>
+        </div>
+        <dl class="mobile-kv">
+          <div>
+            <dt>来源</dt>
+            <dd>
+              {{ row.source_subscription_name || '-' }}
+              <el-tag v-if="row.source_subscription_status === 'failed'" size="small" type="danger" effect="plain">异常</el-tag>
+              <el-tag v-else-if="row.source_subscription_status === 'syncing'" size="small" type="warning" effect="plain">同步中</el-tag>
+            </dd>
+          </div>
+          <div>
+            <dt>分组</dt>
+            <dd>{{ row.source_group || '-' }}</dd>
+          </div>
+          <div>
+            <dt>更新时间</dt>
+            <dd>{{ formatDateTime(row.last_seen_at) }}</dd>
+          </div>
+        </dl>
+        <div v-if="row.tags?.length" class="mobile-tags">
+          <el-tag v-for="tag in row.tags" :key="tag" size="small" effect="plain">{{ tag }}</el-tag>
+        </div>
+        <div class="mobile-card-actions">
+          <el-button :icon="DocumentCopy" @click="showRaw(row)">查看 YAML</el-button>
+        </div>
+      </article>
+    </div>
   </section>
   <el-dialog v-model="rawVisible" title="节点 YAML" width="680px">
     <textarea class="code-editor" readonly :value="rawText" />

@@ -8,12 +8,36 @@
           <span>Sub Hub</span>
         </div>
       </div>
-      <nav>
-        <RouterLink v-for="item in navItems" :key="item.path" :to="item.path">
-          <component :is="item.icon" />
-          <span>{{ item.label }}</span>
-        </RouterLink>
-      </nav>
+      <div class="nav-shell" :class="{ 'has-left': canScrollNavLeft, 'has-right': canScrollNavRight }">
+        <button
+          class="nav-scroll-button nav-scroll-button-left"
+          :class="{ 'is-visible': canScrollNavLeft }"
+          type="button"
+          aria-label="向左查看更多导航"
+          :aria-hidden="!canScrollNavLeft"
+          :tabindex="canScrollNavLeft ? 0 : -1"
+          @click="scrollNav('left')"
+        >
+          <ArrowLeft />
+        </button>
+        <nav ref="navRef" @scroll.passive="updateNavScrollState">
+          <RouterLink v-for="item in navItems" :key="item.path" :to="item.path">
+            <component :is="item.icon" />
+            <span>{{ item.label }}</span>
+          </RouterLink>
+        </nav>
+        <button
+          class="nav-scroll-button nav-scroll-button-right"
+          :class="{ 'is-visible': canScrollNavRight }"
+          type="button"
+          aria-label="向右查看更多导航"
+          :aria-hidden="!canScrollNavRight"
+          :tabindex="canScrollNavRight ? 0 : -1"
+          @click="scrollNav('right')"
+        >
+          <ArrowRight />
+        </button>
+      </div>
       <div class="sidebar-actions">
         <div class="sidebar-user">
           <div class="sidebar-avatar">{{ userInitials }}</div>
@@ -47,6 +71,7 @@
             <span class="ws-status-dot"></span>
             <span>{{ socketLabel }}</span>
           </div>
+          <el-button class="topbar-logout" :icon="SwitchButton" circle title="退出登录" aria-label="退出登录" @click="logout" />
         </div>
       </header>
       <section class="content-panel">
@@ -58,6 +83,8 @@
 
 <script setup lang="ts">
 import {
+  ArrowLeft,
+  ArrowRight,
   Collection,
   Connection,
   DataAnalysis,
@@ -69,7 +96,7 @@ import {
   Tools,
 } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ThemeToggle from '@/components/ThemeToggle.vue'
@@ -80,6 +107,11 @@ const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 const appVersion = __APP_VERSION__
+const navRef = ref<HTMLElement | null>(null)
+const canScrollNavLeft = ref(false)
+const canScrollNavRight = ref(false)
+let navMeasureFrame = 0
+let navActiveScrollTimer = 0
 const { status: socketStatus, connect: connectSocket, stop: stopSocket } = useStatusSocket(() => {}, {
   topics: ['dashboard'],
   intervalMs: 30000,
@@ -116,6 +148,80 @@ const socketLabel = computed(() => {
 })
 const socketTitle = computed(() => `WebSocket：${socketLabel.value}`)
 
+function measureNavScrollState() {
+  const nav = navRef.value
+  if (!nav) {
+    canScrollNavLeft.value = false
+    canScrollNavRight.value = false
+    return
+  }
+
+  const maxScrollLeft = nav.scrollWidth - nav.clientWidth
+  const threshold = 2
+  canScrollNavLeft.value = nav.scrollLeft > threshold
+  canScrollNavRight.value = maxScrollLeft > threshold && nav.scrollLeft < maxScrollLeft - threshold
+}
+
+function updateNavScrollState() {
+  if (navMeasureFrame) cancelAnimationFrame(navMeasureFrame)
+  navMeasureFrame = requestAnimationFrame(() => {
+    navMeasureFrame = 0
+    measureNavScrollState()
+  })
+}
+
+function scrollToActiveNavItem(behavior: ScrollBehavior) {
+  const nav = navRef.value
+  const activeItem = nav?.querySelector<HTMLElement>('a.router-link-active')
+  if (!nav || !activeItem) return
+
+  const maxScrollLeft = Math.max(0, nav.scrollWidth - nav.clientWidth)
+  const targetLeft = activeItem.offsetLeft - Math.max(0, (nav.clientWidth - activeItem.offsetWidth) / 2)
+  const nextScrollLeft = Math.min(maxScrollLeft, Math.max(0, targetLeft))
+  if (behavior === 'auto') {
+    nav.scrollLeft = nextScrollLeft
+    return
+  }
+
+  nav.scrollBy({
+    left: nextScrollLeft - nav.scrollLeft,
+    behavior,
+  })
+}
+
+function scrollActiveNavIntoView(behavior: ScrollBehavior = 'smooth') {
+  if (navActiveScrollTimer) window.clearTimeout(navActiveScrollTimer)
+
+  const align = (attempt: number) => {
+    measureNavScrollState()
+    nextTick(() => {
+      scrollToActiveNavItem(attempt === 0 ? behavior : 'auto')
+      updateNavScrollState()
+
+      if (attempt >= 3) {
+        navActiveScrollTimer = 0
+        return
+      }
+
+      navActiveScrollTimer = window.setTimeout(() => align(attempt + 1), attempt === 0 ? 140 : 100)
+    })
+  }
+
+  align(0)
+}
+
+function scrollNav(direction: 'left' | 'right') {
+  const nav = navRef.value
+  if (!nav) return
+
+  const distance = Math.max(144, Math.round(nav.clientWidth * 0.72))
+  nav.scrollBy({
+    left: direction === 'left' ? -distance : distance,
+    behavior: 'smooth',
+  })
+  window.setTimeout(updateNavScrollState, 260)
+}
+
 async function logout() {
   try {
     await ElMessageBox.confirm('确认退出当前账号吗？退出后需要重新登录才能继续使用系统。', '退出登录', {
@@ -133,6 +239,23 @@ async function logout() {
   router.push('/login')
 }
 
-onMounted(connectSocket)
-onBeforeUnmount(stopSocket)
+watch(
+  () => route.path,
+  () => {
+    nextTick(() => scrollActiveNavIntoView())
+  },
+)
+
+onMounted(() => {
+  connectSocket()
+  window.addEventListener('resize', updateNavScrollState)
+  nextTick(() => scrollActiveNavIntoView('auto'))
+})
+
+onBeforeUnmount(() => {
+  stopSocket()
+  window.removeEventListener('resize', updateNavScrollState)
+  if (navMeasureFrame) cancelAnimationFrame(navMeasureFrame)
+  if (navActiveScrollTimer) window.clearTimeout(navActiveScrollTimer)
+})
 </script>

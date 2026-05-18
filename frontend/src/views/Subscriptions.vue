@@ -1,14 +1,14 @@
 <template>
   <section class="surface list-page">
     <div class="toolbar">
-      <el-input v-model="group" placeholder="分组" clearable style="max-width: 220px" @change="load" />
-      <div style="display: flex; gap: 10px">
+      <el-input v-model="group" class="toolbar-input" placeholder="分组" clearable @change="load" />
+      <div class="toolbar-actions">
         <el-button :icon="Setting" :loading="settingsLoading" @click="openSubscriptionSettings">订阅配置</el-button>
         <el-button :icon="Refresh" :loading="trafficRefreshing" @click="refreshTraffic">刷新流量</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新增订阅</el-button>
       </div>
     </div>
-    <el-table class="list-table" :data="items" stripe height="100%">
+    <el-table class="list-table desktop-table" :data="items" stripe height="100%">
       <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
       <el-table-column prop="group_name" label="分组" width="120" />
       <el-table-column prop="priority" label="优先级" width="90" />
@@ -55,6 +55,54 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="mobile-card-list">
+      <el-empty v-if="!items.length" description="暂无订阅" :image-size="72" />
+      <article v-for="row in items" v-else :key="row.id" class="mobile-card">
+        <div class="mobile-card-head">
+          <div class="mobile-card-title">
+            <strong>{{ row.name }}</strong>
+            <span>{{ row.group_name }} · 优先级 {{ row.priority }}</span>
+          </div>
+          <el-tag :type="row.enabled ? 'success' : 'info'" effect="plain">{{ row.enabled ? '启用' : '停用' }}</el-tag>
+        </div>
+        <div class="mobile-card-meta">
+          <span>更新</span>
+          <el-tooltip v-if="row.last_error" :content="row.last_error" placement="top">
+            <el-tag size="small" :type="statusTag(row.last_status)">{{ statusText(row.last_status) }}</el-tag>
+          </el-tooltip>
+          <el-tag v-else size="small" :type="statusTag(row.last_status)">{{ statusText(row.last_status) }}</el-tag>
+        </div>
+        <div class="mobile-card-section">
+          <div class="traffic-cell mobile-traffic-cell">
+            <span>{{ formatBytes(row.traffic_used) }} / {{ formatBytes(row.traffic_total) }}</span>
+            <el-progress :percentage="trafficPercent(row)" :stroke-width="6" :show-text="false" />
+            <div class="traffic-cell-meta">
+              <small>剩余 {{ formatBytes(row.traffic_remaining) }}</small>
+              <el-tooltip v-if="row.traffic_error" :content="row.traffic_error" placement="top">
+                <el-tag size="small" :type="row.traffic_stale ? 'warning' : 'danger'" effect="plain">
+                  {{ row.traffic_stale ? '异常保留' : '异常' }}
+                </el-tag>
+              </el-tooltip>
+            </div>
+          </div>
+        </div>
+        <dl class="mobile-kv">
+          <div>
+            <dt>到期</dt>
+            <dd>{{ formatDateTime(row.traffic_expire_at) }}</dd>
+          </div>
+          <div>
+            <dt>最近更新</dt>
+            <dd>{{ formatDateTime(row.last_updated_at) }}</dd>
+          </div>
+        </dl>
+        <div class="mobile-card-actions">
+          <el-button :icon="Refresh" @click="refresh(row.id)">刷新</el-button>
+          <el-button :icon="Edit" @click="openEdit(row)">编辑</el-button>
+          <el-button :icon="Delete" type="danger" @click="remove(row.id)">删除</el-button>
+        </div>
+      </article>
+    </div>
   </section>
 
   <el-dialog v-model="dialogVisible" :title="editingId ? '编辑订阅' : '新增订阅'" width="620px">
