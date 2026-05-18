@@ -15,11 +15,22 @@ from app.services.subconverter import SubconverterClient
 router = APIRouter()
 SMART_PROXY_SETTING_PREFIXES = ("smart_proxy_", "mihomo_")
 SETTING_SCOPES = {
-    "system": {"redis_url", "subscription_public_base_url", "proxy_public_base_url", "subconverter_url", "acl4ssr_config_url"},
-    "subscription": {"subscription_token", "cache_ttl_seconds", "traffic_poll_interval_minutes"},
-    "node_pool": {"node_filter_patterns"},
-    "node": {"node_filter_patterns"},
+    "system": (
+        "subscription_public_base_url",
+        "proxy_public_base_url",
+        "redis_url",
+        "subconverter_url",
+        "acl4ssr_config_url",
+    ),
+    "subscription": ("subscription_token", "cache_ttl_seconds", "traffic_poll_interval_minutes"),
+    "node_pool": ("node_filter_patterns",),
+    "node": ("node_filter_patterns",),
 }
+SETTING_SCOPE_KEYS = {scope: set(keys) for scope, keys in SETTING_SCOPES.items()}
+SETTING_ORDER: dict[str, int] = {}
+for keys in SETTING_SCOPES.values():
+    for key in keys:
+        SETTING_ORDER.setdefault(key, len(SETTING_ORDER))
 SETTING_LABELS = {
     "redis_url": "Redis 地址",
     "redis_password": "Redis 密码",
@@ -36,10 +47,13 @@ SETTING_LABELS = {
 
 async def _setting_reads(session: SessionDep, scope: str | None = None) -> list[SettingRead]:
     scope_keys = None
+    scope_order: dict[str, int] | None = None
     if scope:
-        scope_keys = SETTING_SCOPES.get(scope)
+        scoped_keys = SETTING_SCOPES.get(scope)
+        scope_keys = SETTING_SCOPE_KEYS.get(scope)
         if scope_keys is None:
             raise HTTPException(status_code=400, detail="Unknown settings scope")
+        scope_order = {key: index for index, key in enumerate(scoped_keys or ())}
     items = (await session.scalars(select(SystemSetting).order_by(SystemSetting.key.asc()))).all()
     safe_items = []
     for item in items:
@@ -51,6 +65,8 @@ async def _setting_reads(session: SessionDep, scope: str | None = None) -> list[
         if item.secret and item.value:
             data.value = "********"
         safe_items.append(data)
+    order_map = scope_order or SETTING_ORDER
+    safe_items.sort(key=lambda item: (order_map.get(item.key, len(order_map)), item.key))
     return safe_items
 
 
