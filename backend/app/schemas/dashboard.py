@@ -47,5 +47,7 @@ class DashboardStats(BaseModel):
     mihomo_version: str | None = None
     last_updated_at: str | None
     public_base_url: str = ""
+    subscription_public_base_url: str = ""
+    proxy_public_base_url: str = ""
     traffic: TrafficStats
     client_subscriptions: list[ClientSubscriptionUrl]

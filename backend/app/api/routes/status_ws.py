@@ -13,7 +13,7 @@ from app.models.node import Node
 from app.models.smart_proxy import SmartProxy
 from app.models.subscription import Subscription
 from app.models.user import User
-from app.services.settings import get_public_base_url, get_subconverter_url, get_subscription_token
+from app.services.settings import get_proxy_public_base_url, get_subconverter_url, get_subscription_public_base_url, get_subscription_token
 from app.services.smart_proxy import (
     add_smart_proxy_switch_log,
     apply_stability_priority_runtime,
@@ -100,6 +100,8 @@ async def _dashboard_payload() -> dict[str, Any]:
         subconverter_status = "ok" if await client.health() else "unavailable"
         mihomo = await mihomo_core_status(session)
         traffic_snapshot = await get_or_create_traffic_snapshot(session)
+        subscription_public_base_url = await get_subscription_public_base_url(session)
+        proxy_public_base_url = await get_proxy_public_base_url(session)
         return {
             "subscriptions": subscriptions,
             "enabled_subscriptions": enabled,
@@ -112,7 +114,9 @@ async def _dashboard_payload() -> dict[str, Any]:
             "mihomo_status": "ok" if mihomo["available"] else "unavailable",
             "mihomo_version": mihomo["version"],
             "last_updated_at": last_seen_at.isoformat() if last_seen_at else None,
-            "public_base_url": await get_public_base_url(session),
+            "public_base_url": subscription_public_base_url,
+            "subscription_public_base_url": subscription_public_base_url,
+            "proxy_public_base_url": proxy_public_base_url,
             "traffic": _traffic_payload(traffic_snapshot),
             "client_subscriptions": _client_subscription_urls(await get_subscription_token(session)),
         }

@@ -31,14 +31,14 @@ from app.services.settings import (
     get_mihomo_api_url,
     get_mihomo_core_config_path,
     get_mihomo_runtime_config_path,
-    get_public_base_url,
+    get_proxy_public_base_url,
     get_smart_proxy_exclude_unknown_traffic,
     get_smart_proxy_expire_soon_days,
     get_smart_proxy_low_remaining_mb,
     get_smart_proxy_min_remaining_mb,
     get_smart_proxy_port_range,
     get_smart_proxy_traffic_guard_enabled,
-    public_hostname_from_base_url,
+    public_host_port_from_base_url,
 )
 from app.services.traffic import latest_traffic_snapshot
 
@@ -166,7 +166,7 @@ def endpoint_for(proxy: SmartProxy) -> str:
 
 def endpoint_for_public_base_url(proxy: SmartProxy, public_base_url: str | None) -> str:
     endpoint = endpoint_for(proxy)
-    host = public_hostname_from_base_url(public_base_url)
+    host, public_port = public_host_port_from_base_url(public_base_url)
     if not host:
         return endpoint
     try:
@@ -175,11 +175,12 @@ def endpoint_for_public_base_url(proxy: SmartProxy, public_base_url: str | None)
         return endpoint
     auth = f"{parsed.netloc.rsplit('@', 1)[0]}@" if "@" in parsed.netloc else ""
     host_part = f"[{host}]" if ":" in host and not host.startswith("[") else host
-    return urlunsplit((parsed.scheme, f"{auth}{host_part}:{proxy.port}", parsed.path, parsed.query, parsed.fragment))
+    port = public_port or proxy.port
+    return urlunsplit((parsed.scheme, f"{auth}{host_part}:{port}", parsed.path, parsed.query, parsed.fragment))
 
 
 async def public_endpoint_for(session: AsyncSession, proxy: SmartProxy) -> str:
-    return endpoint_for_public_base_url(proxy, await get_public_base_url(session))
+    return endpoint_for_public_base_url(proxy, await get_proxy_public_base_url(session))
 
 
 def runtime_group_name(proxy: SmartProxy) -> str:

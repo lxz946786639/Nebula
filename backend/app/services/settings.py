@@ -6,7 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models.system_setting import SystemSetting
 
-PUBLIC_BASE_URL_KEY = "public_base_url"
+LEGACY_PUBLIC_BASE_URL_KEY = "public_base_url"
+SUBSCRIPTION_PUBLIC_BASE_URL_KEY = "subscription_public_base_url"
+PROXY_PUBLIC_BASE_URL_KEY = "proxy_public_base_url"
 
 
 def normalize_public_base_url(value: str | None) -> str:
@@ -33,14 +35,30 @@ def normalize_public_base_url(value: str | None) -> str:
     return urlunsplit((parsed.scheme.lower(), netloc, path, "", ""))
 
 
-def public_hostname_from_base_url(value: str | None) -> str | None:
+def public_host_port_from_base_url(value: str | None) -> tuple[str | None, int | None]:
     normalized = normalize_public_base_url(value)
     if not normalized:
-        return None
+        return None, None
     try:
-        return urlsplit(normalized).hostname
+        parsed = urlsplit(normalized)
+        return parsed.hostname, parsed.port
     except ValueError:
-        return None
+        return None, None
+
+
+def public_host_base_from_base_url(value: str | None) -> str:
+    normalized = normalize_public_base_url(value)
+    if not normalized:
+        return ""
+    try:
+        parsed = urlsplit(normalized)
+    except ValueError:
+        return ""
+    host = parsed.hostname
+    if not host:
+        return ""
+    host_part = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    return urlunsplit((parsed.scheme, host_part, "", "", ""))
 
 
 async def get_setting(session: AsyncSession, key: str, fallback: str | None = None) -> str | None:
@@ -49,7 +67,21 @@ async def get_setting(session: AsyncSession, key: str, fallback: str | None = No
 
 
 async def get_public_base_url(session: AsyncSession) -> str:
-    value = await get_setting(session, PUBLIC_BASE_URL_KEY, "")
+    return await get_subscription_public_base_url(session)
+
+
+async def get_subscription_public_base_url(session: AsyncSession) -> str:
+    value = await get_setting(session, SUBSCRIPTION_PUBLIC_BASE_URL_KEY, "")
+    if not str(value or "").strip():
+        value = await get_setting(session, LEGACY_PUBLIC_BASE_URL_KEY, "")
+    return normalize_public_base_url(value)
+
+
+async def get_proxy_public_base_url(session: AsyncSession) -> str:
+    value = await get_setting(session, PROXY_PUBLIC_BASE_URL_KEY, "")
+    if not str(value or "").strip():
+        value = await get_setting(session, LEGACY_PUBLIC_BASE_URL_KEY, "")
+        return public_host_base_from_base_url(value)
     return normalize_public_base_url(value)
 
 

@@ -149,6 +149,8 @@ const stats = reactive({
   mihomo_version: null as string | null,
   last_updated_at: '',
   public_base_url: '',
+  subscription_public_base_url: '',
+  proxy_public_base_url: '',
   traffic: {
     upload: 0,
     download: 0,
@@ -200,8 +202,8 @@ function formatBytes(value: number) {
   return `${size.toFixed(index === 0 ? 0 : 2)} ${units[index]}`
 }
 
-function publicBaseUrl() {
-  const raw = String(stats.public_base_url || '').trim()
+function subscriptionPublicBaseUrl() {
+  const raw = String(stats.subscription_public_base_url || stats.public_base_url || '').trim()
   if (!raw) return ''
   const candidate = raw.includes('://') ? raw : `https://${raw}`
   try {
@@ -215,7 +217,7 @@ function publicBaseUrl() {
 }
 
 function fullUrl(path: string) {
-  const base = publicBaseUrl() || window.location.origin
+  const base = subscriptionPublicBaseUrl() || window.location.origin
   return `${base}${path.startsWith('/') ? path : `/${path}`}`
 }
 

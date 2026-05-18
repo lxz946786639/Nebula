@@ -7,6 +7,7 @@ from app.models.config_template import ConfigTemplate
 from app.models.rule_template import RuleTemplate
 from app.models.system_setting import SystemSetting
 from app.models.user import User
+from app.services.settings import public_host_base_from_base_url
 
 
 async def bootstrap_defaults(session: AsyncSession) -> None:
@@ -45,9 +46,22 @@ async def bootstrap_defaults(session: AsyncSession) -> None:
             )
         )
 
+    legacy_public_base_url = await session.scalar(select(SystemSetting).where(SystemSetting.key == "public_base_url"))
+    legacy_public_base_url_value = legacy_public_base_url.value if legacy_public_base_url is not None else ""
+    legacy_proxy_public_base_url_value = public_host_base_from_base_url(legacy_public_base_url_value)
+
     defaults = {
         "redis_url": (settings.REDIS_URL, False, "Redis connection URL"),
-        "public_base_url": ("", False, "Public base URL used for displayed subscription and proxy addresses"),
+        "subscription_public_base_url": (
+            legacy_public_base_url_value or "",
+            False,
+            "Public base URL used for displayed subscription addresses",
+        ),
+        "proxy_public_base_url": (
+            legacy_proxy_public_base_url_value,
+            False,
+            "Public host or base URL used for displayed smart proxy addresses",
+        ),
         "subconverter_url": (settings.subconverter_base_url, False, "subconverter HTTP API base URL"),
         "acl4ssr_config_url": (settings.ACL4SSR_CONFIG_URL, False, "Default ACL4SSR remote config URL"),
         "subscription_token": (settings.SUBSCRIPTION_TOKEN, True, "Token used by public subscription endpoints"),
