@@ -38,6 +38,11 @@ const settingMeta: Record<string, { label: string; description: string; placehol
     description: 'Redis 服务连接地址，用于缓存最终配置和节点快照。',
     placeholder: 'redis://redis:6379/0',
   },
+  public_base_url: {
+    label: '公开访问地址',
+    description: '用于生成对外展示的订阅地址和代理地址；留空时使用当前访问地址。建议填写完整 http(s)://域名[:端口]。',
+    placeholder: 'https://nebula.example.com',
+  },
   subconverter_url: {
     label: 'subconverter 服务地址',
     description: 'subconverter HTTP API 基础地址。',

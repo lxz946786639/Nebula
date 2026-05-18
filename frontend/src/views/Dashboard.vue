@@ -148,6 +148,7 @@ const stats = reactive({
   mihomo_status: '-',
   mihomo_version: null as string | null,
   last_updated_at: '',
+  public_base_url: '',
   traffic: {
     upload: 0,
     download: 0,
@@ -199,8 +200,23 @@ function formatBytes(value: number) {
   return `${size.toFixed(index === 0 ? 0 : 2)} ${units[index]}`
 }
 
+function publicBaseUrl() {
+  const raw = String(stats.public_base_url || '').trim()
+  if (!raw) return ''
+  const candidate = raw.includes('://') ? raw : `https://${raw}`
+  try {
+    const url = new URL(candidate)
+    const host = url.hostname.includes(':') && !url.hostname.startsWith('[') ? `[${url.hostname}]` : url.hostname
+    const path = url.pathname.replace(/\/+$/, '')
+    return `${url.protocol}//${host}${url.port ? `:${url.port}` : ''}${path}`
+  } catch {
+    return raw.replace(/\/+$/, '')
+  }
+}
+
 function fullUrl(path: string) {
-  return `${window.location.origin}${path}`
+  const base = publicBaseUrl() || window.location.origin
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`
 }
 
 function normalizedStatus(value?: string | null) {

@@ -41,13 +41,13 @@ from app.services.smart_proxy import (
     apply_mihomo_runtime,
     apply_stability_priority_runtime,
     check_smart_proxy_health,
-    endpoint_for,
     enforce_smart_proxy_access,
     add_smart_proxy_switch_log,
     ensure_unique_port,
     mihomo_core_status,
     normalize_proxy_type,
     normalize_strategy,
+    public_endpoint_for,
     smart_proxy_traffic_policy,
     smart_proxy_uses_global_policy,
     smart_proxy_runtime_status,
@@ -197,7 +197,7 @@ async def _read_proxy(
     data = SmartProxyRead.model_validate(proxy)
     if proxy.strategy in {"select", "fallback"} and proxy.stability_priority:
         data.strategy = "stable"
-    data.endpoint = endpoint_for(proxy)
+    data.endpoint = await public_endpoint_for(session, proxy)
     data.candidate_nodes = await smart_proxy_candidate_count(session, proxy)
     data.runtime_apply_error = runtime_apply_error
     data.apply_status, data.apply_status_reason = _apply_status(proxy)

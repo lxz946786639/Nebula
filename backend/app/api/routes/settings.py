@@ -15,7 +15,7 @@ from app.services.subconverter import SubconverterClient
 router = APIRouter()
 SMART_PROXY_SETTING_PREFIXES = ("smart_proxy_", "mihomo_")
 SETTING_SCOPES = {
-    "system": {"redis_url", "subconverter_url", "acl4ssr_config_url"},
+    "system": {"redis_url", "public_base_url", "subconverter_url", "acl4ssr_config_url"},
     "subscription": {"subscription_token", "cache_ttl_seconds", "traffic_poll_interval_minutes"},
     "node_pool": {"node_filter_patterns"},
     "node": {"node_filter_patterns"},
@@ -23,6 +23,7 @@ SETTING_SCOPES = {
 SETTING_LABELS = {
     "redis_url": "Redis 地址",
     "redis_password": "Redis 密码",
+    "public_base_url": "公开访问地址",
     "subconverter_url": "Subconverter 地址",
     "acl4ssr_config_url": "ACL4SSR 远程规则地址",
     "subscription_token": "订阅访问 Token",

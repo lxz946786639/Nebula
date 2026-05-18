@@ -46,5 +46,6 @@ class DashboardStats(BaseModel):
     mihomo_status: str = "unknown"
     mihomo_version: str | None = None
     last_updated_at: str | None
+    public_base_url: str = ""
     traffic: TrafficStats
     client_subscriptions: list[ClientSubscriptionUrl]

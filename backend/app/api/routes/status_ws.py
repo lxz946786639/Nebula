@@ -13,7 +13,7 @@ from app.models.node import Node
 from app.models.smart_proxy import SmartProxy
 from app.models.subscription import Subscription
 from app.models.user import User
-from app.services.settings import get_subconverter_url, get_subscription_token
+from app.services.settings import get_public_base_url, get_subconverter_url, get_subscription_token
 from app.services.smart_proxy import (
     add_smart_proxy_switch_log,
     apply_stability_priority_runtime,
@@ -112,6 +112,7 @@ async def _dashboard_payload() -> dict[str, Any]:
             "mihomo_status": "ok" if mihomo["available"] else "unavailable",
             "mihomo_version": mihomo["version"],
             "last_updated_at": last_seen_at.isoformat() if last_seen_at else None,
+            "public_base_url": await get_public_base_url(session),
             "traffic": _traffic_payload(traffic_snapshot),
             "client_subscriptions": _client_subscription_urls(await get_subscription_token(session)),
         }

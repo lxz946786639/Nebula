@@ -47,6 +47,7 @@ async def bootstrap_defaults(session: AsyncSession) -> None:
 
     defaults = {
         "redis_url": (settings.REDIS_URL, False, "Redis connection URL"),
+        "public_base_url": ("", False, "Public base URL used for displayed subscription and proxy addresses"),
         "subconverter_url": (settings.subconverter_base_url, False, "subconverter HTTP API base URL"),
         "acl4ssr_config_url": (settings.ACL4SSR_CONFIG_URL, False, "Default ACL4SSR remote config URL"),
         "subscription_token": (settings.SUBSCRIPTION_TOKEN, True, "Token used by public subscription endpoints"),

@@ -1,13 +1,56 @@
+from urllib.parse import urlsplit, urlunsplit
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.system_setting import SystemSetting
 
+PUBLIC_BASE_URL_KEY = "public_base_url"
+
+
+def normalize_public_base_url(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    candidate = raw if "://" in raw else f"https://{raw}"
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return raw.rstrip("/")
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return raw.rstrip("/")
+    host = parsed.hostname
+    if not host:
+        return raw.rstrip("/")
+    host_part = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    try:
+        port = parsed.port
+    except ValueError:
+        return raw.rstrip("/")
+    netloc = f"{host_part}:{port}" if port else host_part
+    path = parsed.path.rstrip("/")
+    return urlunsplit((parsed.scheme.lower(), netloc, path, "", ""))
+
+
+def public_hostname_from_base_url(value: str | None) -> str | None:
+    normalized = normalize_public_base_url(value)
+    if not normalized:
+        return None
+    try:
+        return urlsplit(normalized).hostname
+    except ValueError:
+        return None
+
 
 async def get_setting(session: AsyncSession, key: str, fallback: str | None = None) -> str | None:
     item = await session.scalar(select(SystemSetting).where(SystemSetting.key == key))
     return item.value if item is not None else fallback
+
+
+async def get_public_base_url(session: AsyncSession) -> str:
+    value = await get_setting(session, PUBLIC_BASE_URL_KEY, "")
+    return normalize_public_base_url(value)
 
 
 async def get_subconverter_url(session: AsyncSession) -> str:

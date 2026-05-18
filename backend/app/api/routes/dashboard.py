@@ -9,7 +9,7 @@ from app.models.node import Node
 from app.models.smart_proxy import SmartProxy
 from app.models.subscription import Subscription
 from app.schemas.dashboard import ClientSubscriptionUrl, DashboardStats, TrafficItem, TrafficStats
-from app.services.settings import get_subconverter_url, get_subscription_token
+from app.services.settings import get_public_base_url, get_subconverter_url, get_subscription_token
 from app.services.smart_proxy import mihomo_core_status, reconcile_smart_proxy_runtime_after_traffic_change
 from app.services.subconverter import SubconverterClient
 from app.models.traffic_snapshot import TrafficSnapshot
@@ -125,6 +125,7 @@ async def dashboard(session: SessionDep, current_user: CurrentUser) -> Dashboard
         mihomo_status="ok" if mihomo["available"] else "unavailable",
         mihomo_version=mihomo["version"],
         last_updated_at=last_updated_at,
+        public_base_url=await get_public_base_url(session),
         traffic=traffic,
         client_subscriptions=build_client_subscription_urls(await get_subscription_token(session)),
     )
