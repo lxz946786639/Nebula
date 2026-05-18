@@ -89,14 +89,23 @@
         </div>
         <div class="url-list">
           <div v-for="item in proxyAddresses" :key="item.id" class="url-row proxy-url-row">
-            <div>
-              <div class="proxy-url-title">
-                <strong>{{ item.name }}</strong>
-                <el-tag size="small" effect="plain">{{ proxyTypeLabel(item.proxy_type) }}</el-tag>
-              </div>
-              <code>{{ item.endpoint }}</code>
+            <div class="proxy-url-title">
+              <strong>{{ item.name }}</strong>
+              <el-tag size="small" effect="plain">{{ proxyTypeLabel(item.proxy_type) }}</el-tag>
             </div>
-            <el-button :icon="DocumentCopy" circle title="复制代理地址" @click="copy(item.endpoint)" />
+            <div class="proxy-endpoint-list">
+              <div v-for="endpoint in proxyEndpointOptions(item)" :key="endpoint.scheme" class="proxy-endpoint-row">
+                <el-button
+                  :icon="DocumentCopy"
+                  circle
+                  size="small"
+                  :title="`复制${endpoint.label}地址`"
+                  @click="copy(endpoint.url)"
+                />
+                <el-tag class="proxy-endpoint-tag" size="small" effect="plain">{{ endpoint.label }}</el-tag>
+                <code>{{ endpoint.url }}</code>
+              </div>
+            </div>
           </div>
           <el-empty v-if="!proxyAddresses.length" description="暂无代理地址" :image-size="72" />
         </div>
@@ -228,8 +237,25 @@ function statusTag(value?: string | null) {
 
 function proxyTypeLabel(value: string) {
   if (value === 'socks') return 'SOCKS5'
-  if (value === 'mixed') return 'Mixed'
+  if (value === 'mixed') return '混合代理'
   return 'HTTP'
+}
+
+function endpointWithScheme(endpoint: string, scheme: 'http' | 'socks5') {
+  return endpoint.replace(/^[a-z][a-z0-9+.-]*:\/\//i, `${scheme}://`)
+}
+
+function proxyEndpointOptions(item: ProxyAddress) {
+  if (item.proxy_type === 'mixed') {
+    return [
+      { label: 'HTTP(S)', scheme: 'http', url: endpointWithScheme(item.endpoint, 'http') },
+      { label: 'SOCKS5', scheme: 'socks5', url: endpointWithScheme(item.endpoint, 'socks5') },
+    ]
+  }
+  if (item.proxy_type === 'socks') {
+    return [{ label: 'SOCKS5', scheme: 'socks5', url: endpointWithScheme(item.endpoint, 'socks5') }]
+  }
+  return [{ label: 'HTTP(S)', scheme: 'http', url: endpointWithScheme(item.endpoint, 'http') }]
 }
 
 async function copy(value: string) {
