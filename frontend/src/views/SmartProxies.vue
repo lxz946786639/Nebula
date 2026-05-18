@@ -34,17 +34,18 @@
         <template #default="{ row }">
           <div class="endpoint-list">
             <div v-for="endpoint in endpointOptions(row)" :key="endpoint.scheme" class="endpoint-row">
+              <el-tag class="endpoint-tag" size="small" effect="plain">{{ endpoint.label }}</el-tag>
+              <el-tooltip :content="endpoint.url" placement="top">
+                <span class="endpoint-text">{{ endpoint.url }}</span>
+              </el-tooltip>
               <el-button
+                class="endpoint-copy"
                 :icon="DocumentCopy"
                 circle
                 size="small"
                 :title="`复制${endpoint.label}地址`"
                 @click="copy(endpoint.url)"
               />
-              <el-tag class="endpoint-tag" size="small" effect="plain">{{ endpoint.label }}</el-tag>
-              <el-tooltip :content="endpoint.url" placement="top">
-                <span class="endpoint-text">{{ endpoint.url }}</span>
-              </el-tooltip>
             </div>
           </div>
         </template>
@@ -475,14 +476,14 @@
           />
         </template>
       </el-table-column>
-      <el-table-column prop="name" label="节点" min-width="260" show-overflow-tooltip />
-      <el-table-column prop="source_subscription_name" label="来源" min-width="130" show-overflow-tooltip />
+      <el-table-column prop="name" label="节点" min-width="260" show-overflow-tooltip class-name="table-cell-left" />
+      <el-table-column prop="source_subscription_name" label="来源" min-width="130" show-overflow-tooltip class-name="table-cell-left" />
       <el-table-column prop="type" label="协议" width="90" />
       <el-table-column prop="country_code" label="国家" width="90" />
       <el-table-column label="延迟" width="110">
         <template #default="{ row }">{{ formatDelay(row.latency) }}</template>
       </el-table-column>
-      <el-table-column prop="server" label="服务器" min-width="180" show-overflow-tooltip />
+      <el-table-column prop="server" label="服务器" min-width="180" show-overflow-tooltip class-name="table-cell-left" />
     </el-table>
     <div class="selected-node-list picker-selected">
       <el-tag
@@ -596,11 +597,11 @@
       <el-table-column prop="created_at" label="时间" width="180">
         <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column prop="from_node" label="原节点" min-width="220" show-overflow-tooltip>
+      <el-table-column prop="from_node" label="原节点" min-width="220" show-overflow-tooltip class-name="table-cell-left">
         <template #default="{ row }">{{ row.from_node || '-' }}</template>
       </el-table-column>
-      <el-table-column prop="to_node" label="新节点" min-width="220" show-overflow-tooltip />
-      <el-table-column prop="reason" label="切换原因" min-width="180" show-overflow-tooltip />
+      <el-table-column prop="to_node" label="新节点" min-width="220" show-overflow-tooltip class-name="table-cell-left" />
+      <el-table-column prop="reason" label="切换原因" min-width="180" show-overflow-tooltip class-name="table-cell-left" />
     </el-table>
   </el-dialog>
 
@@ -709,12 +710,12 @@
         <el-table-column label="延迟" width="100">
           <template #default="{ row }">{{ formatDelay(row.delay) }}</template>
         </el-table-column>
-        <el-table-column label="说明" min-width="220" show-overflow-tooltip>
+        <el-table-column label="说明" min-width="220" show-overflow-tooltip class-name="table-cell-left">
           <template #default="{ row }">{{ statusMessageText(row.message) }}</template>
         </el-table-column>
       </el-table>
       <el-table :data="selectedHealth.nodes" stripe max-height="320">
-        <el-table-column prop="name" label="节点" min-width="260" show-overflow-tooltip />
+        <el-table-column prop="name" label="节点" min-width="260" show-overflow-tooltip class-name="table-cell-left" />
         <el-table-column prop="source" label="来源" width="110" />
         <el-table-column prop="type" label="协议" width="90" />
         <el-table-column label="状态" width="90">
@@ -748,7 +749,7 @@
       <el-table-column label="检测项" width="110">
         <template #default="{ row }">{{ checkTypeText(row.check_type) }}</template>
       </el-table-column>
-      <el-table-column prop="node_name" label="节点" min-width="220" show-overflow-tooltip />
+      <el-table-column prop="node_name" label="节点" min-width="220" show-overflow-tooltip class-name="table-cell-left" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="statusTag(row.status)">{{ readableStatusText(row.status) }}</el-tag>
@@ -771,6 +772,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 import http from '@/api/http'
 import { useStatusSocket } from '@/composables/useStatusSocket'
+import { copyText } from '@/utils/clipboard'
 import { formatDateTime } from '@/utils/datetime'
 
 interface SmartProxy {
@@ -2125,8 +2127,12 @@ function statusTag(value?: string | null) {
 }
 
 async function copy(value: string) {
-  await navigator.clipboard.writeText(value)
-  ElMessage.success('已复制')
+  try {
+    await copyText(value)
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动复制')
+  }
 }
 
 onMounted(() => {
@@ -2209,28 +2215,47 @@ onBeforeUnmount(() => {
 }
 
 .endpoint-list {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 7px;
+  align-items: center;
+  justify-content: center;
 }
 
 .endpoint-row {
   display: grid;
-  grid-template-columns: 28px 68px minmax(0, 1fr);
+  grid-template-columns: auto minmax(120px, 1fr) 28px;
   align-items: center;
   gap: 8px;
-  min-height: 28px;
+  width: min(100%, 380px);
+  min-height: 32px;
+  padding: 3px 5px 3px 8px;
+  background: var(--el-fill-color-lighter);
+  border: 1px solid var(--el-border-color);
+  border-radius: 999px;
 }
 
 .endpoint-tag {
-  width: 68px;
+  width: 72px;
   justify-content: center;
+  border-radius: 999px;
 }
 
 .endpoint-text {
   overflow: hidden;
   color: var(--el-text-color-primary);
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  font-size: 12px;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.endpoint-copy {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
 }
 
 .diagnosis-section-title {

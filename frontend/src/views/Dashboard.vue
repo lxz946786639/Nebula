@@ -88,26 +88,14 @@
           <h2>代理地址列表</h2>
         </div>
         <div class="url-list">
-          <div v-for="item in proxyAddresses" :key="item.id" class="url-row proxy-url-row">
-            <div class="proxy-url-title">
-              <strong>{{ item.name }}</strong>
-              <el-tag size="small" effect="plain">{{ proxyTypeLabel(item.proxy_type) }}</el-tag>
+          <div v-for="item in proxyAddressRows" :key="item.id" class="url-row">
+            <div>
+              <strong>{{ item.name }}（{{ item.typeLabel }}）</strong>
+              <code>{{ item.url }}</code>
             </div>
-            <div class="proxy-endpoint-list">
-              <div v-for="endpoint in proxyEndpointOptions(item)" :key="endpoint.scheme" class="proxy-endpoint-row">
-                <el-button
-                  :icon="DocumentCopy"
-                  circle
-                  size="small"
-                  :title="`复制${endpoint.label}地址`"
-                  @click="copy(endpoint.url)"
-                />
-                <el-tag class="proxy-endpoint-tag" size="small" effect="plain">{{ endpoint.label }}</el-tag>
-                <code>{{ endpoint.url }}</code>
-              </div>
-            </div>
+            <el-button :icon="DocumentCopy" circle :title="`复制${item.typeLabel}地址`" @click="copy(item.url)" />
           </div>
-          <el-empty v-if="!proxyAddresses.length" description="暂无代理地址" :image-size="72" />
+          <el-empty v-if="!proxyAddressRows.length" description="暂无代理地址" :image-size="72" />
         </div>
       </section>
     </section>
@@ -117,10 +105,11 @@
 <script setup lang="ts">
 import { DocumentCopy, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 import http from '@/api/http'
 import { useStatusSocket } from '@/composables/useStatusSocket'
+import { copyText } from '@/utils/clipboard'
 import { formatDateTime } from '@/utils/datetime'
 
 interface ClientSubscription {
@@ -165,6 +154,16 @@ const stats = reactive({
 })
 const proxyAddresses = ref<ProxyAddress[]>([])
 const loading = ref(false)
+const proxyAddressRows = computed(() =>
+  proxyAddresses.value.flatMap((item) =>
+    proxyEndpointOptions(item).map((endpoint) => ({
+      id: `${item.id}-${endpoint.scheme}`,
+      name: item.name,
+      typeLabel: endpoint.label,
+      url: endpoint.url,
+    }))
+  )
+)
 const { connect: connectStatusSocket, stop: stopStatusSocket } = useStatusSocket((message) => {
   if (message.dashboard && typeof message.dashboard === 'object') {
     Object.assign(stats, message.dashboard)
@@ -253,12 +252,6 @@ function statusTag(value?: string | null) {
   return 'warning'
 }
 
-function proxyTypeLabel(value: string) {
-  if (value === 'socks') return 'SOCKS5'
-  if (value === 'mixed') return '混合代理'
-  return 'HTTP'
-}
-
 function endpointWithScheme(endpoint: string, scheme: 'http' | 'socks5') {
   return endpoint.replace(/^[a-z][a-z0-9+.-]*:\/\//i, `${scheme}://`)
 }
@@ -277,8 +270,12 @@ function proxyEndpointOptions(item: ProxyAddress) {
 }
 
 async function copy(value: string) {
-  await navigator.clipboard.writeText(value)
-  ElMessage.success('已复制')
+  try {
+    await copyText(value)
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动复制')
+  }
 }
 
 onMounted(() => {

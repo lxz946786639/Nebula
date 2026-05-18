@@ -39,7 +39,7 @@
       </el-table-column>
       <el-table-column label="来源" min-width="150" show-overflow-tooltip>
         <template #default="{ row }">
-          <div style="display: flex; gap: 6px; align-items: center">
+          <div class="inline-cell centered">
             <span>{{ row.source_subscription_name || '-' }}</span>
             <el-tooltip v-if="row.source_subscription_status === 'failed'" :content="row.source_subscription_error || '订阅同步异常'" placement="top">
               <el-tag size="small" type="danger" effect="plain">异常</el-tag>
@@ -49,9 +49,9 @@
         </template>
       </el-table-column>
       <el-table-column prop="source_group" label="分组" width="100" />
-      <el-table-column label="标签" min-width="180">
+      <el-table-column label="标签" min-width="180" class-name="table-cell-center">
         <template #default="{ row }">
-          <div style="display: flex; gap: 6px; flex-wrap: wrap">
+          <div class="tag-cell">
             <el-tag v-for="tag in row.tags" :key="tag" size="small" effect="plain">{{ tag }}</el-tag>
           </div>
         </template>

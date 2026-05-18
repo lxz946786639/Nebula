@@ -685,49 +685,6 @@ h1 {
   white-space: nowrap;
 }
 
-.proxy-url-row {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.6fr) minmax(0, 1fr);
-  align-items: start;
-}
-
-.proxy-url-title {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
-}
-
-.proxy-url-title strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.proxy-endpoint-list {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.proxy-endpoint-row {
-  display: grid;
-  grid-template-columns: 28px 68px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  min-height: 28px;
-}
-
-.proxy-endpoint-tag {
-  width: 68px;
-  justify-content: center;
-}
-
-.proxy-endpoint-row code {
-  margin-top: 0;
-}
-
 .code-editor {
   width: 100%;
   min-height: 260px;
@@ -931,9 +888,70 @@ small {
   font-weight: 700;
 }
 
+.el-table th.el-table__cell > .cell {
+  display: flex;
+  justify-content: center;
+  text-align: center;
+}
+
+.el-table td.el-table__cell > .cell {
+  text-align: center;
+}
+
+.el-table td.el-table__cell:not(.table-cell-left) > .cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.el-table td.table-cell-left > .cell {
+  display: block;
+  text-align: left;
+}
+
+.el-table td.table-cell-center > .cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .el-table td.el-table__cell,
 .el-table th.el-table__cell.is-leaf {
   border-bottom-color: var(--line);
+}
+
+.traffic-cell {
+  display: flex;
+  width: 100%;
+  max-width: 210px;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+
+.traffic-cell .el-progress {
+  width: 100%;
+}
+
+.traffic-cell-meta,
+.inline-cell,
+.tag-cell {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.traffic-cell-meta,
+.tag-cell {
+  justify-content: center;
+}
+
+.inline-cell.centered {
+  justify-content: center;
+}
+
+.tag-cell {
+  flex-wrap: wrap;
 }
 
 .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
@@ -1009,10 +1027,6 @@ small {
 
   .dashboard-card-grid,
   .dashboard-detail-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .proxy-url-row {
     grid-template-columns: 1fr;
   }
 

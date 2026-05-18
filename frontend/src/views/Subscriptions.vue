@@ -25,12 +25,12 @@
           <el-tag v-else :type="statusTag(row.last_status)">{{ statusText(row.last_status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="流量使用" min-width="220">
+      <el-table-column label="流量使用" min-width="220" class-name="table-cell-center">
         <template #default="{ row }">
-          <div style="display: flex; flex-direction: column; gap: 6px">
+          <div class="traffic-cell">
             <span>{{ formatBytes(row.traffic_used) }} / {{ formatBytes(row.traffic_total) }}</span>
             <el-progress :percentage="trafficPercent(row)" :stroke-width="6" :show-text="false" />
-            <div style="display: flex; gap: 6px; align-items: center">
+            <div class="traffic-cell-meta">
               <small>剩余 {{ formatBytes(row.traffic_remaining) }}</small>
               <el-tooltip v-if="row.traffic_error" :content="row.traffic_error" placement="top">
                 <el-tag size="small" :type="row.traffic_stale ? 'warning' : 'danger'" effect="plain">

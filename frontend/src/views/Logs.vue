@@ -33,7 +33,7 @@
         <el-table-column prop="action_label" label="动作" width="110" />
         <el-table-column prop="actor" label="操作人" width="120" show-overflow-tooltip />
         <el-table-column prop="title" label="标题" min-width="190" show-overflow-tooltip />
-        <el-table-column prop="description" label="详情" min-width="360" show-overflow-tooltip />
+        <el-table-column prop="description" label="详情" min-width="360" show-overflow-tooltip class-name="table-cell-left" />
       </el-table>
     </div>
 
