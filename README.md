@@ -76,8 +76,8 @@ docker compose up -d --build
 | 服务 | 地址 |
 | --- | --- |
 | Web 管理后台 | `http://localhost:8088` |
-| 后端 API 文档 | `http://localhost:8000/docs` |
-| 后端健康检查 | `http://localhost:8000/health` |
+| 后端 API 文档 | `http://localhost:8001/docs` |
+| 后端健康检查 | `http://localhost:8001/health` |
 
 默认管理员用户名为 `admin`。生产环境会拒绝默认弱密码和默认弱 Token，请在启动前完成 `.env` 修改。
 
@@ -122,7 +122,7 @@ docker compose down
 默认网络暴露策略：
 
 - Web 管理后台默认绑定 `127.0.0.1:8088`。
-- 后端 API 默认绑定 `127.0.0.1:8000`。
+- 后端 API 默认绑定 `127.0.0.1:8001`。
 - 智能代理端口默认映射 `127.0.0.1:37890-37900`。
 - Redis、subconverter、Mihomo API 默认不暴露到宿主机，只在 Docker 内部网络使用。
 
@@ -203,8 +203,8 @@ npm run dev
 | 服务 | 地址 |
 | --- | --- |
 | 前端开发服务 | `http://localhost:5173` |
-| 后端 API | `http://localhost:8000` |
-| API 文档 | `http://localhost:8000/docs` |
+| 后端 API | `http://localhost:8001` |
+| API 文档 | `http://localhost:8001/docs` |
 
 开发环境示例默认使用：
 

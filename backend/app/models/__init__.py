@@ -1,4 +1,5 @@
 from app.models.audit import AuditLog
+from app.models.ant_proxy_state import AntProxyState
 from app.models.config_template import ConfigTemplate
 from app.models.node_snapshot import NodeSnapshot
 from app.models.node import Node
@@ -13,6 +14,7 @@ from app.models.user import User
 
 __all__ = [
     "AuditLog",
+    "AntProxyState",
     "ConfigTemplate",
     "NodeSnapshot",
     "Node",

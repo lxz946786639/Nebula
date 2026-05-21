@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     MIHOMO_API_SECRET: str = ""
     MIHOMO_RUNTIME_CONFIG_PATH: str = "./data/mihomo-runtime.yaml"
     MIHOMO_CORE_CONFIG_PATH: str = "./data/mihomo-runtime.yaml"
+    ANT_PROXY_STATE_PATH: str = "./data/ant-proxy-state.json"
     SMART_PROXY_PORT_START: int = 37890
     SMART_PROXY_PORT_END: int = 37900
     SMART_PROXY_AUTO_APPLY_INTERVAL_MINUTES: int = 0

@@ -52,3 +52,4 @@ Thumbs.db
 *.seed
 tmp/
 temp/
+/exports/

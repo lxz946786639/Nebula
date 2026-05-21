@@ -10,6 +10,7 @@ from app.core.database import AsyncSessionLocal, init_db
 from app.core.rate_limit import RateLimitMiddleware
 from app.core.startup_checks import validate_startup_settings
 from app.services.bootstrap import bootstrap_defaults
+from app.services.ant_proxy import ant_proxy_service
 from app.tasks.scheduler import start_scheduler, stop_scheduler
 
 
@@ -22,8 +23,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     await init_db()
     async with AsyncSessionLocal() as session:
         await bootstrap_defaults(session)
+        await ant_proxy_service.restore(session)
     start_scheduler()
     yield
+    await ant_proxy_service.stop()
     stop_scheduler()
     await close_redis()
 

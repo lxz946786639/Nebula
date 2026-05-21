@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import AppLayout from '@/layouts/AppLayout.vue'
 import { useAuthStore } from '@/stores/auth'
+import AntProxy from '@/views/AntProxy.vue'
 import Dashboard from '@/views/Dashboard.vue'
 import Logs from '@/views/Logs.vue'
 import Login from '@/views/Login.vue'
@@ -25,6 +26,7 @@ const router = createRouter({
         { path: 'subscriptions', component: Subscriptions },
         { path: 'nodes', component: Nodes },
         { path: 'smart-proxies', component: SmartProxies },
+        { path: 'ant-proxy', component: AntProxy },
         { path: 'rules', component: Rules },
         { path: 'templates', component: Templates },
         { path: 'settings', component: Settings },
