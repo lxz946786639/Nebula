@@ -1,7 +1,9 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select
 
 from app.api.router import api_router
 from app.core.cache import close_redis
@@ -9,12 +11,34 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, init_db
 from app.core.rate_limit import RateLimitMiddleware
 from app.core.startup_checks import validate_startup_settings
+from app.models.smart_proxy import SmartProxy
 from app.services.bootstrap import bootstrap_defaults
 from app.services.ant_proxy import ant_proxy_service
+from app.services.smart_proxy import apply_mihomo_runtime
 from app.tasks.scheduler import start_scheduler, stop_scheduler
 
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+async def _restore_ant_smart_proxy_runtime() -> None:
+    if not ant_proxy_service.nodes:
+        return
+    async with AsyncSessionLocal() as session:
+        ant_proxy_id = await session.scalar(
+            select(SmartProxy.id)
+            .where(SmartProxy.enabled.is_(True), SmartProxy.data_source == "ant")
+            .limit(1)
+        )
+        if not ant_proxy_id:
+            return
+        try:
+            result = await apply_mihomo_runtime(session, reload_core=True)
+            if result.error:
+                logger.info("Ant smart proxy runtime restore skipped: %s", result.error)
+        except Exception as exc:
+            logger.info("Ant smart proxy runtime restore skipped: %s", exc)
 
 
 @asynccontextmanager
@@ -24,6 +48,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     async with AsyncSessionLocal() as session:
         await bootstrap_defaults(session)
         await ant_proxy_service.restore(session)
+    await _restore_ant_smart_proxy_runtime()
     start_scheduler()
     yield
     await ant_proxy_service.stop()

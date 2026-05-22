@@ -2110,6 +2110,34 @@ async def check_smart_proxy_health(
         result["error"] = "Smart proxy is stopped"
         return result
 
+    if smart_proxy_is_ant(proxy):
+        runtime_result = await apply_mihomo_runtime(session, reload_core=True)
+        runtime_status = "failed" if runtime_result.error else "ok"
+        result["checks"].append(
+            {
+                "check_type": "runtime_apply",
+                "status": runtime_status,
+                "delay": None,
+                "message": runtime_result.error or "Ant 内部适配器已重建并重新应用到 Mihomo",
+            }
+        )
+        session.add(
+            SmartProxyHealthLog(
+                smart_proxy_id=proxy.id,
+                node_id=None,
+                node_name=None,
+                check_type="runtime_apply",
+                status=runtime_status,
+                latency=None,
+                message=runtime_result.error or "Ant 内部适配器已重建并重新应用到 Mihomo",
+            )
+        )
+        if runtime_result.error:
+            result["status"] = "core_unavailable"
+            result["error"] = runtime_result.error
+            await session.commit()
+            return result
+
     core = await mihomo_core_status(session)
     if not core["available"]:
         result["status"] = "core_unavailable"
