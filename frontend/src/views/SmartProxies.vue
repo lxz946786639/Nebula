@@ -55,13 +55,26 @@
         <strong>{{ formatRate(coreStatus.download_speed) }}</strong>
       </div>
     </div>
-    <el-table class="list-table desktop-table" :data="items" stripe height="100%" empty-text="暂无代理服务">
-      <el-table-column prop="name" label="代理名称" min-width="160" />
+    <div class="table-wrap has-cards desktop-table">
+      <el-table class="list-table" :data="items" stripe height="100%" empty-text="暂无代理服务">
+      <el-table-column label="代理名称" min-width="190" class-name="table-cell-center">
+        <template #default="{ row }">
+          <div class="proxy-name-cell">
+            <strong>{{ row.name }}</strong>
+            <el-tag size="small" :type="runtimeStatusTag(row)" effect="plain">{{ runtimeStatusLabel(row) }}</el-tag>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column label="类型" width="100">
         <template #default="{ row }">{{ typeLabel(row.proxy_type) }}</template>
       </el-table-column>
       <el-table-column label="策略" width="120">
         <template #default="{ row }">{{ strategyLabel(row.strategy, row.stability_priority) }}</template>
+      </el-table-column>
+      <el-table-column label="数据来源" width="132">
+        <template #default="{ row }">
+          <el-tag size="small" effect="plain">{{ dataSourceSummary(row) }}</el-tag>
+        </template>
       </el-table-column>
       <el-table-column label="代理地址" min-width="360">
         <template #default="{ row }">
@@ -83,36 +96,14 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="candidate_nodes" label="候选节点" width="100" />
-      <el-table-column label="当前节点" min-width="180" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.current_node || '-' }}</template>
-      </el-table-column>
-      <el-table-column label="切换" width="90">
+      <el-table-column label="当前节点" min-width="210" class-name="table-cell-center">
         <template #default="{ row }">
-          <el-button link type="primary" title="查看节点切换历史" @click="showSwitchLogs(row)">
-            {{ row.switch_count }}
-          </el-button>
-        </template>
-      </el-table-column>
-      <el-table-column width="110">
-        <template #header>
-          <span class="label-with-help">
-            状态
-            <el-popover placement="top" width="360" trigger="hover">
-              <template #reference>
-                <span class="help-icon" title="查看状态说明">?</span>
-              </template>
-              <div class="strategy-help">
-                <div v-for="item in runtimeStatusOptions" :key="item.value" class="strategy-help-item">
-                  <strong>{{ item.label }}</strong>
-                  <span>{{ item.description }}</span>
-                </div>
-              </div>
-            </el-popover>
-          </span>
-        </template>
-        <template #default="{ row }">
-          <el-tag :type="runtimeStatusTag(row)">{{ runtimeStatusLabel(row) }}</el-tag>
+          <div class="current-node-cell">
+            <span>{{ row.current_node || '-' }}</span>
+            <el-button link type="primary" title="查看节点调试历史" @click="showSwitchLogs(row)">
+              节点调试历史（{{ row.switch_count }}）
+            </el-button>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="应用" width="110">
@@ -122,83 +113,104 @@
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="250" fixed="right">
+      <el-table-column label="操作" width="148" fixed="right" class-name="table-cell-actions" header-class-name="table-cell-actions">
         <template #default="{ row }">
-          <el-space :size="6" wrap>
-            <el-button link type="primary" :icon="Edit" title="编辑代理" @click="openEdit(row)">编辑</el-button>
+          <div class="table-action-icons">
+            <el-button :icon="Edit" circle title="编辑代理" @click="openEdit(row)" />
             <el-button
-              link
               type="primary"
               :icon="DataAnalysis"
+              circle
               title="查看运行状态并执行健康检测"
               @click="openDiagnosis(row)"
-            >
-              诊断
-            </el-button>
+            />
             <el-button
               v-if="row.enabled"
-              link
               type="warning"
               :icon="VideoPause"
+              circle
               title="停止代理"
               @click="stopProxy(row)"
-            >
-              停用
-            </el-button>
+            />
             <el-button
               v-else
-              link
               type="success"
               :icon="VideoPlay"
+              circle
               title="启动代理"
               @click="startProxy(row)"
-            >
-              启用
-            </el-button>
-            <el-button link type="danger" :icon="Delete" title="删除代理" @click="deleteProxy(row)">删除</el-button>
-          </el-space>
+            />
+            <el-button type="danger" :icon="Delete" circle title="删除代理" @click="deleteProxy(row)" />
+          </div>
         </template>
       </el-table-column>
-    </el-table>
-    <div class="mobile-card-list">
+      </el-table>
+    </div>
+    <div class="mobile-card-list data-cards">
       <el-empty v-if="!items.length" description="暂无代理服务" :image-size="72" />
-      <article v-for="row in items" v-else :key="row.id" class="mobile-card">
+      <article v-for="row in items" v-else :key="row.id" class="mobile-card smart-proxy-mobile-card">
         <div class="mobile-card-head">
           <div class="mobile-card-title">
             <strong>{{ row.name }}</strong>
-            <span>{{ typeLabel(row.proxy_type) }} · {{ strategyLabel(row.strategy, row.stability_priority) }}</span>
+            <span>智能代理服务</span>
           </div>
           <el-tag :type="runtimeStatusTag(row)" effect="plain">{{ runtimeStatusLabel(row) }}</el-tag>
         </div>
-        <div class="mobile-card-meta">
-          <el-tag size="small" :type="applyStatusType(row)" effect="plain">{{ applyStatusLabel(row) }}</el-tag>
-          <el-tag size="small" effect="plain">候选 {{ row.candidate_nodes }}</el-tag>
-          <el-button link type="primary" @click="showSwitchLogs(row)">切换 {{ row.switch_count }}</el-button>
-        </div>
-        <div class="endpoint-list mobile-endpoint-list">
-          <div v-for="endpoint in endpointOptions(row)" :key="endpoint.scheme" class="endpoint-row">
-            <el-tag class="endpoint-tag" size="small" effect="plain">{{ endpoint.label }}</el-tag>
-            <span class="endpoint-text">{{ endpoint.url }}</span>
-            <el-button
-              class="endpoint-copy"
-              :icon="DocumentCopy"
-              circle
-              size="small"
-              :title="`复制${endpoint.label}地址`"
-              @click="copy(endpoint.url)"
-            />
+
+        <div class="smart-proxy-mobile-summary">
+          <div class="smart-proxy-mobile-summary-item">
+            <span>类型</span>
+            <strong>{{ typeLabel(row.proxy_type) }}</strong>
+          </div>
+          <div class="smart-proxy-mobile-summary-item">
+            <span>策略</span>
+            <strong>{{ strategyLabel(row.strategy, row.stability_priority) }}</strong>
+          </div>
+          <div class="smart-proxy-mobile-summary-item">
+            <span>数据来源</span>
+            <el-tag size="small" effect="plain">{{ dataSourceSummary(row) }}</el-tag>
+          </div>
+          <div class="smart-proxy-mobile-summary-item">
+            <span>应用</span>
+            <el-tag size="small" :type="applyStatusType(row)" effect="plain">{{ applyStatusLabel(row) }}</el-tag>
           </div>
         </div>
-        <dl class="mobile-kv">
-          <div>
-            <dt>当前节点</dt>
-            <dd>{{ row.current_node || '-' }}</dd>
+
+        <section class="smart-proxy-mobile-section">
+          <div class="smart-proxy-mobile-section-head">代理地址</div>
+          <div class="endpoint-list mobile-endpoint-list">
+            <div v-for="endpoint in endpointOptions(row)" :key="endpoint.scheme" class="endpoint-row">
+              <el-tag class="endpoint-tag" size="small" effect="plain">{{ endpoint.label }}</el-tag>
+              <span class="endpoint-text">{{ endpoint.url }}</span>
+              <el-button
+                class="endpoint-copy"
+                :icon="DocumentCopy"
+                circle
+                size="small"
+                :title="`复制${endpoint.label}地址`"
+                @click="copy(endpoint.url)"
+              />
+            </div>
           </div>
+        </section>
+
+        <section class="smart-proxy-mobile-section smart-proxy-mobile-current">
+          <div class="smart-proxy-mobile-current-copy">
+            <span>当前节点</span>
+            <strong>{{ row.current_node || '-' }}</strong>
+          </div>
+          <el-button link type="primary" title="查看节点调试历史" @click="showSwitchLogs(row)">
+            节点调试历史（{{ row.switch_count }}）
+          </el-button>
+        </section>
+
+        <dl class="mobile-kv smart-proxy-mobile-note">
           <div>
             <dt>说明</dt>
             <dd>{{ applyStatusReason(row) }}</dd>
           </div>
         </dl>
+
         <div class="mobile-card-actions">
           <el-button :icon="Edit" @click="openEdit(row)">编辑</el-button>
           <el-button :icon="DataAnalysis" @click="openDiagnosis(row)">诊断</el-button>
@@ -210,41 +222,91 @@
     </div>
   </section>
 
-  <el-dialog v-model="dialogVisible" :title="editingId ? '编辑代理' : '新增代理'" width="980px">
-    <el-form label-position="top" class="smart-proxy-form">
+  <el-dialog v-model="dialogVisible" :title="dialogTitle" width="980px" class="smart-proxy-dialog">
+    <div v-if="!editingId && createWizardStep !== 'form'" class="create-wizard">
+      <ol class="wizard-stepper">
+        <li :class="{ active: createWizardStep === 'method', done: createWizardStep !== 'method' }">
+          <span class="wizard-step-index">1</span>
+          <span class="wizard-step-text">选择方式</span>
+        </li>
+        <li :class="{ active: createWizardStep === 'preset' }">
+          <span class="wizard-step-index">2</span>
+          <span class="wizard-step-text">{{ creationMode === 'quick' ? '选择模板' : '填写配置' }}</span>
+        </li>
+        <li v-if="creationMode === 'quick'">
+          <span class="wizard-step-index">3</span>
+          <span class="wizard-step-text">填写配置</span>
+        </li>
+      </ol>
+
+      <section v-if="createWizardStep === 'method'" class="wizard-section">
+        <div class="wizard-section-head">
+          <div>
+            <em>STEP 1</em>
+            <strong>选择新增方式</strong>
+          </div>
+          <span>按当前使用场景选择入口，后续表单会保留对应的必要配置。</span>
+        </div>
+        <div class="wizard-option-grid">
+          <button
+            v-for="option in createModeOptions"
+            :key="option.value"
+            type="button"
+            class="wizard-option-card"
+            @click="startCreateMode(option.value)"
+          >
+            <span class="wizard-option-head">
+              <span class="wizard-option-title">{{ option.title }}</span>
+              <span class="wizard-option-arrow">选择</span>
+            </span>
+            <span class="wizard-option-desc">{{ option.description }}</span>
+            <span class="wizard-option-meta">
+              <el-tag v-for="tag in option.tags" :key="tag" size="small" effect="plain">{{ tag }}</el-tag>
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <section v-else class="wizard-section">
+        <div class="wizard-section-head">
+          <div>
+            <em>STEP 2</em>
+            <strong>选择快速模板</strong>
+          </div>
+          <span>默认使用自定义模板，也可以选择一个场景模板后再进入表单微调。</span>
+        </div>
+        <div class="preset-grid wizard-preset-grid">
+          <button
+            v-for="preset in quickPresetCards"
+            :key="preset.key"
+            type="button"
+            class="preset-card"
+            :class="{ active: selectedPresetKey === preset.key }"
+            @click="selectPreset(preset)"
+          >
+            <span class="preset-title">{{ preset.name }}</span>
+            <span class="preset-desc">{{ preset.description }}</span>
+            <span class="preset-meta">
+              <el-tag size="small" effect="plain">{{ strategyLabel(preset.strategy) }}</el-tag>
+              <el-tag size="small" effect="plain">{{ scenarioLabel(preset.scenario) }}</el-tag>
+            </span>
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <el-form v-else label-position="top" class="smart-proxy-form">
+      <div v-if="!editingId" class="create-form-summary">
+        <div>
+          <strong>{{ createModeLabel(creationMode) }}</strong>
+          <span>{{ createModeSummary }}</span>
+        </div>
+        <el-button class="summary-back-button" plain type="primary" @click="goBackInCreateWizard">返回上一步</el-button>
+      </div>
       <el-tabs v-model="activeDialogTab" class="proxy-dialog-tabs">
         <el-tab-pane label="基础配置" name="basic">
-          <el-radio-group
-            v-if="!editingId"
-            v-model="creationMode"
-            class="smart-proxy-mode"
-            @change="onCreationModeChange"
-          >
-            <el-radio-button label="quick">快速模板</el-radio-button>
-            <el-radio-button label="advanced">高级编排</el-radio-button>
-            <el-radio-button label="manual">手动选节点</el-radio-button>
-          </el-radio-group>
-
-          <div v-if="!editingId && creationMode === 'quick'" class="preset-grid">
-            <button
-              v-for="preset in metadata.presets"
-              :key="preset.key"
-              type="button"
-              class="preset-card"
-              :class="{ active: selectedPresetKey === preset.key }"
-              @click="applyPreset(preset)"
-            >
-              <span class="preset-title">{{ preset.name }}</span>
-              <span class="preset-desc">{{ preset.description }}</span>
-              <span class="preset-meta">
-                <el-tag size="small" effect="plain">{{ strategyLabel(preset.strategy) }}</el-tag>
-                <el-tag size="small" effect="plain">{{ scenarioLabel(preset.scenario) }}</el-tag>
-              </span>
-            </button>
-          </div>
-
           <div class="form-grid">
-            <el-form-item label="代理名称" required>
+            <el-form-item label="代理名称" required :error="proxyNameError">
               <el-input v-model="form.name" placeholder="例如：ChatGPT 专线" />
             </el-form-item>
             <el-form-item label="使用场景" required>
@@ -284,16 +346,27 @@
             </el-form-item>
           </div>
           <div class="form-grid">
-            <el-form-item label="节点来源" required>
-              <el-select v-model="form.source_mode" @change="onSourceModeChange">
-                <el-option label="所有节点" value="all" />
-                <el-option label="指定订阅" value="subscription" />
-                <el-option label="指定国家" value="country" />
-                <el-option label="指定标签" value="tag" />
-                <el-option label="指定节点" value="manual" />
+            <el-form-item label="数据来源" required>
+              <el-select v-model="form.data_source" @change="onDataSourceChange">
+                <el-option label="订阅节点" value="subscription" />
+                <el-option label="蚂蚁节点" value="ant" />
               </el-select>
             </el-form-item>
-            <el-form-item v-if="form.source_mode === 'country'" label="国家/地区" required>
+            <el-form-item label="节点来源" required>
+              <el-select v-model="form.source_mode" @change="onSourceModeChange">
+                <el-option
+                  v-for="option in sourceModeOptions"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item
+              v-if="isAntSource || form.source_mode === 'country'"
+              :label="isAntSource ? '指定地区' : '国家/地区'"
+              :required="!isAntSource"
+            >
               <el-select
                 v-model="countryCodes"
                 multiple
@@ -301,18 +374,22 @@
                 allow-create
                 default-first-option
                 clearable
-                placeholder="选择或输入国家代码"
+                :placeholder="isAntSource ? '不选择则不限地区' : '选择或输入国家代码'"
                 @change="onSourceFilterChange"
               >
                 <el-option
-                  v-for="country in metadata.countries"
+                  v-for="country in currentCountryOptions"
                   :key="country.code"
                   :label="countryOptionLabel(country)"
                   :value="country.code"
                 />
               </el-select>
             </el-form-item>
-            <el-form-item v-if="form.source_mode === 'tag'" label="节点标签" required>
+            <el-form-item
+              v-if="isAntSource || form.source_mode === 'tag'"
+              :label="isAntSource ? '指定线路' : tagFilterLabel"
+              :required="!isAntSource"
+            >
               <el-select
                 v-model="tags"
                 multiple
@@ -320,13 +397,18 @@
                 allow-create
                 default-first-option
                 clearable
-                placeholder="选择或输入标签"
+                :placeholder="isAntSource ? '不选择则不限线路' : '选择或输入标签'"
                 @change="onSourceFilterChange"
               >
-                <el-option v-for="tag in metadata.tags" :key="tag" :label="tag" :value="tag" />
+                <el-option
+                  v-for="tag in currentTagOptions"
+                  :key="tag.value"
+                  :label="tag.label"
+                  :value="tag.value"
+                />
               </el-select>
             </el-form-item>
-            <el-form-item v-if="form.source_mode === 'subscription'" label="订阅来源" required>
+            <el-form-item v-if="form.data_source === 'subscription' && form.source_mode === 'subscription'" label="订阅来源" required>
               <el-select v-model="subscriptionIds" multiple filterable clearable placeholder="选择订阅" @change="onSourceFilterChange">
                 <el-option
                   v-for="subscription in metadata.subscriptions"
@@ -344,21 +426,21 @@
                 allow-create
                 default-first-option
                 clearable
-                placeholder="vmess / trojan / ss"
+                :placeholder="protocolPlaceholder"
                 @change="onSourceFilterChange"
               >
-                <el-option v-for="protocol in metadata.protocol_types" :key="protocol" :label="protocol" :value="protocol" />
+                <el-option v-for="protocol in currentProtocolOptions" :key="protocol" :label="protocol" :value="protocol" />
               </el-select>
             </el-form-item>
           </div>
           <el-form-item v-if="form.source_mode === 'manual'" label="指定节点来源" required>
             <div class="node-selection">
               <el-button :icon="Plus" @click="openNodePicker('source')">选择节点</el-button>
-              <el-button v-if="nodeIds.length" @click="clearSelectedNodes">清空</el-button>
-              <span class="node-count">已选 {{ nodeIds.length }} 个节点</span>
+              <el-button v-if="selectedManualNodeIds.length" @click="clearSelectedNodes">清空</el-button>
+              <span class="node-count">已选 {{ selectedManualNodeIds.length }} 个节点</span>
             </div>
-            <div v-if="nodeIds.length" class="selected-node-list">
-              <div v-for="nodeId in nodeIds" :key="nodeId" class="selected-node-item">
+            <div v-if="selectedManualNodeIds.length" class="selected-node-list">
+              <div v-for="nodeId in selectedManualNodeIds" :key="nodeId" class="selected-node-item">
                 <el-tag closable effect="plain" @close="removeSelectedNode(nodeId)">
                   {{ nodeLabelById(nodeId) }}
                 </el-tag>
@@ -427,13 +509,13 @@
           <el-form-item v-if="strategyCanSelectNodes" :label="strategyNodeLabel">
             <div class="node-selection">
               <el-button :icon="Plus" @click="openNodePicker('strategy')">从候选节点选择</el-button>
-              <el-button v-if="strategyNodeIds.length" @click="clearStrategyNodes">清空</el-button>
+              <el-button v-if="selectedStrategyNodeIds.length" @click="clearStrategyNodes">清空</el-button>
               <span class="node-count">
-                {{ strategyNodeIds.length ? `已选 ${strategyNodeIds.length} 个策略节点` : '未选择时使用基础配置中的全部候选节点' }}
+                {{ selectedStrategyNodeIds.length ? `已选 ${selectedStrategyNodeIds.length} 个策略节点` : '未选择时使用基础配置中的全部候选节点' }}
               </span>
             </div>
-            <div v-if="strategyNodeIds.length" class="selected-node-list" :class="{ ordered: strategyUsesOrder }">
-              <div v-for="(nodeId, index) in strategyNodeIds" :key="nodeId" class="selected-node-item">
+            <div v-if="selectedStrategyNodeIds.length" class="selected-node-list" :class="{ ordered: strategyUsesOrder }">
+              <div v-for="(nodeId, index) in selectedStrategyNodeIds" :key="nodeId" class="selected-node-item">
                 <span v-if="strategyUsesOrder" class="node-order">{{ index + 1 }}</span>
                 <el-tag closable effect="plain" @close="removeStrategyNode(nodeId)">
                   {{ nodeLabelById(nodeId) }}
@@ -452,7 +534,7 @@
                     circle
                     size="small"
                     title="下移"
-                    :disabled="index === strategyNodeIds.length - 1"
+                    :disabled="index === selectedStrategyNodeIds.length - 1"
                     @click="moveStrategyNode(index, 1)"
                   />
                 </template>
@@ -529,8 +611,21 @@
       </el-tabs>
     </el-form>
     <template #footer>
-      <el-button @click="dialogVisible = false">取消</el-button>
-      <el-button type="primary" @click="save">保存</el-button>
+      <div class="smart-proxy-dialog-footer">
+        <template v-if="!editingId && createWizardStep === 'method'">
+          <el-button @click="dialogVisible = false">取消</el-button>
+        </template>
+        <template v-else-if="!editingId && createWizardStep === 'preset'">
+          <el-button @click="goBackInCreateWizard">上一步</el-button>
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" :disabled="!selectedPresetKey" @click="continueFromPreset">下一步</el-button>
+        </template>
+        <template v-else>
+          <el-button v-if="!editingId" @click="goBackInCreateWizard">上一步</el-button>
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="save">保存</el-button>
+        </template>
+      </div>
     </template>
   </el-dialog>
 
@@ -539,13 +634,13 @@
       <el-input v-model="nodeQ" placeholder="搜索节点/服务器/来源" clearable @change="loadNodeOptions" />
       <el-select v-model="nodeCountry" filterable clearable placeholder="国家/地区" @change="loadNodeOptions">
         <el-option
-          v-for="country in metadata.countries"
+          v-for="country in currentCountryOptions"
           :key="country.code"
           :label="countryOptionLabel(country)"
           :value="country.code"
         />
       </el-select>
-      <el-input v-model="nodeGroup" placeholder="分组" clearable @change="loadNodeOptions" />
+      <el-input v-model="nodeGroup" :placeholder="nodeGroupPlaceholder" clearable @change="loadNodeOptions" />
       <el-button :icon="Refresh" :loading="nodePickerLoading" @click="loadNodeOptions">刷新</el-button>
     </div>
     <el-table class="node-picker-table" :data="nodeOptions" stripe height="420" empty-text="暂无可选节点">
@@ -558,7 +653,7 @@
         </template>
       </el-table-column>
       <el-table-column prop="name" label="节点" min-width="260" show-overflow-tooltip class-name="table-cell-left" />
-      <el-table-column prop="source_subscription_name" label="来源" min-width="130" show-overflow-tooltip class-name="table-cell-left" />
+      <el-table-column prop="source_subscription_name" :label="nodeSourceColumnLabel" min-width="130" show-overflow-tooltip class-name="table-cell-left" />
       <el-table-column prop="type" label="协议" width="90" />
       <el-table-column prop="country_code" label="国家" width="90" />
       <el-table-column label="延迟" width="110">
@@ -1001,12 +1096,15 @@ interface SmartProxy {
   strategy: string
   stability_priority: boolean
   scenario: string
+  data_source: 'subscription' | 'ant'
   source_mode: string
   subscription_ids: number[]
   country_codes: string[]
   tags: string[]
   node_ids: number[]
   strategy_node_ids: number[]
+  ant_node_ids: string[]
+  ant_strategy_node_ids: string[]
   protocol_types: string[]
   health_check_url: string
   health_check_interval: number
@@ -1043,6 +1141,7 @@ interface SmartProxyPreset {
   strategy: string
   stability_priority: boolean
   scenario: string
+  data_source?: 'subscription' | 'ant'
   source_mode: string
   country_codes: string[]
   tags: string[]
@@ -1071,11 +1170,15 @@ interface SmartProxyMetadata {
   subscriptions: SmartProxySubscriptionOption[]
   tags: string[]
   protocol_types: string[]
+  ant_loaded: boolean
+  ant_countries: SmartProxyCountryOption[]
+  ant_tags: Array<{ value: string; label: string; nodes: number }>
+  ant_protocol_types: string[]
   presets: SmartProxyPreset[]
 }
 
 interface NodeItem {
-  id: number
+  id: number | string
   name: string
   type?: string | null
   server?: string | null
@@ -1092,6 +1195,9 @@ interface NodeItem {
 }
 
 type NodePickerMode = 'source' | 'strategy'
+type NodeKey = number | string
+type CreationMode = 'quick' | 'advanced' | 'manual'
+type CreateWizardStep = 'method' | 'preset' | 'form'
 
 interface MihomoCoreStatus {
   api_url: string
@@ -1268,13 +1374,17 @@ const checkingId = ref<number | null>(null)
 const diagnosisMode = ref<'status' | 'health' | 'all' | null>(null)
 const editingId = ref<number | null>(null)
 const activeDialogTab = ref('basic')
-const creationMode = ref<'quick' | 'advanced' | 'manual'>('quick')
+const creationMode = ref<CreationMode>('quick')
+const createWizardStep = ref<CreateWizardStep>('method')
 const selectedPresetKey = ref('')
+const formBaseline = ref('')
 const countryCodes = ref<string[]>([])
 const tags = ref<string[]>([])
 const subscriptionIds = ref<number[]>([])
 const nodeIds = ref<number[]>([])
 const strategyNodeIds = ref<number[]>([])
+const antNodeIds = ref<string[]>([])
+const antStrategyNodeIds = ref<string[]>([])
 const protocolTypes = ref<string[]>([])
 const metadataLoaded = ref(false)
 const metadata = reactive<SmartProxyMetadata>({
@@ -1282,14 +1392,18 @@ const metadata = reactive<SmartProxyMetadata>({
   subscriptions: [],
   tags: [],
   protocol_types: [],
+  ant_loaded: false,
+  ant_countries: [],
+  ant_tags: [],
+  ant_protocol_types: [],
   presets: [],
 })
 const nodePickerVisible = ref(false)
 const nodePickerLoading = ref(false)
 const nodeOptions = ref<NodeItem[]>([])
-const nodeSelectionDraft = ref<number[]>([])
+const nodeSelectionDraft = ref<NodeKey[]>([])
 const nodePickerMode = ref<NodePickerMode>('source')
-const nodeCache = ref<Record<number, NodeItem>>({})
+const nodeCache = ref<Record<string, NodeItem>>({})
 const nodeQ = ref('')
 const nodeCountry = ref('')
 const nodeGroup = ref('')
@@ -1303,6 +1417,7 @@ const form = reactive({
   strategy: 'fallback',
   stability_priority: false,
   scenario: 'general',
+  data_source: 'subscription' as 'subscription' | 'ant',
   source_mode: 'all',
   health_check_url: 'http://www.gstatic.com/generate_204',
   health_check_interval: 300,
@@ -1318,6 +1433,44 @@ const form = reactive({
   exclude_unknown_traffic: false,
   enabled: true,
 })
+const CUSTOM_PRESET_KEY = 'custom'
+const customPreset: SmartProxyPreset = {
+  key: CUSTOM_PRESET_KEY,
+  name: '自定义',
+  description: '从空白配置开始，自行选择策略、来源和过滤条件。',
+  proxy_type: 'mixed',
+  strategy: 'fallback',
+  stability_priority: false,
+  scenario: 'general',
+  data_source: 'subscription',
+  source_mode: 'all',
+  country_codes: [],
+  tags: [],
+  protocol_types: [],
+  health_check_url: 'http://www.gstatic.com/generate_204',
+  health_check_interval: 300,
+  tolerance: 50,
+}
+const createModeOptions: Array<{ value: CreationMode; title: string; description: string; tags: string[] }> = [
+  {
+    value: 'quick',
+    title: '快速模板',
+    description: '先选一个常用场景模板，再进入表单做少量调整。',
+    tags: ['推荐', '场景预设'],
+  },
+  {
+    value: 'advanced',
+    title: '高级编排',
+    description: '从完整配置表单开始，适合自定义来源、策略和安全规则。',
+    tags: ['完整配置', '策略编排'],
+  },
+  {
+    value: 'manual',
+    title: '手动选节点',
+    description: '直接进入指定节点模式，手动挑选候选节点和策略节点。',
+    tags: ['指定节点', '精确控制'],
+  },
+]
 const globalConfig = reactive<SmartProxyGlobalConfig>({
   smart_proxy_port_start: 37890,
   smart_proxy_port_end: 37900,
@@ -1338,6 +1491,53 @@ const effectiveTrafficConfig = computed(() => ({
   expire_soon_days: form.use_global_traffic_policy ? globalConfig.expire_soon_days : Number(form.expire_soon_days || 0),
   exclude_unknown_traffic: form.use_global_traffic_policy ? globalConfig.exclude_unknown_traffic : Boolean(form.exclude_unknown_traffic),
 }))
+const isAntSource = computed(() => form.data_source === 'ant')
+const selectedManualNodeIds = computed<NodeKey[]>(() => (isAntSource.value ? antNodeIds.value : nodeIds.value))
+const selectedStrategyNodeIds = computed<NodeKey[]>(() => (isAntSource.value ? antStrategyNodeIds.value : strategyNodeIds.value))
+const sourceModeOptions = computed(() =>
+  isAntSource.value
+    ? [
+        { label: '所有蚂蚁节点', value: 'all' },
+        { label: '指定节点', value: 'manual' },
+      ]
+    : [
+        { label: '所有节点', value: 'all' },
+        { label: '指定订阅', value: 'subscription' },
+        { label: '指定国家', value: 'country' },
+        { label: '指定标签', value: 'tag' },
+        { label: '指定节点', value: 'manual' },
+      ],
+)
+const currentCountryOptions = computed(() => (isAntSource.value ? metadata.ant_countries : metadata.countries))
+const currentTagOptions = computed(() =>
+  isAntSource.value
+    ? metadata.ant_tags.filter((tag) => tag.value === 'line:free' || tag.value === 'line:paid')
+    : metadata.tags.map((tag) => ({ value: tag, label: tag, nodes: 0 })),
+)
+const currentProtocolOptions = computed(() => (isAntSource.value ? metadata.ant_protocol_types : metadata.protocol_types))
+const tagFilterLabel = computed(() => (isAntSource.value ? '线路' : '节点标签'))
+const protocolPlaceholder = computed(() => (isAntSource.value ? '不选默认全部：ws / wss / tcp' : '不选默认全部：vmess / trojan / ss'))
+const nodeGroupPlaceholder = computed(() => (isAntSource.value ? '线路' : '分组'))
+const nodeSourceColumnLabel = computed(() => (isAntSource.value ? '线路' : '来源'))
+const quickPresetCards = computed(() => [customPreset, ...metadata.presets])
+const selectedQuickPreset = computed(() => quickPresetCards.value.find((item) => item.key === selectedPresetKey.value) || customPreset)
+const dialogTitle = computed(() => {
+  if (editingId.value) return '编辑代理'
+  if (createWizardStep.value === 'preset') return '新增代理 - 选择快速模板'
+  if (createWizardStep.value === 'form') return '新增代理 - 填写配置'
+  return '新增代理'
+})
+const createModeSummary = computed(() => {
+  if (creationMode.value === 'quick') return `快速模板：${selectedQuickPreset.value.name}`
+  if (creationMode.value === 'manual') return '手动指定节点作为候选来源'
+  return '完整表单配置策略、来源和访问控制'
+})
+const proxyNameError = computed(() => {
+  const normalizedName = normalizeProxyName(form.name)
+  if (!normalizedName) return ''
+  const duplicated = items.value.some((item) => item.id !== editingId.value && normalizeProxyName(item.name) === normalizedName)
+  return duplicated ? '代理名称已存在，请换一个名称' : ''
+})
 const strategyOptions = [
   {
     value: 'stable',
@@ -1477,6 +1677,11 @@ const runtimeStatusOptions = [
     description: '代理已启用但运行不完整，常见原因是策略组缺失、候选节点为空或 Mihomo API 返回异常。',
   },
   {
+    value: 'proxy_unavailable',
+    label: '代理不可用',
+    description: '代理已应用且策略组存在，但代理下所有运行节点当前都不可用。',
+  },
+  {
     value: 'core_unavailable',
     label: '核心不可用',
     description: '当前无法连接 Mihomo API，代理运行状态无法确认。',
@@ -1488,6 +1693,55 @@ const runtimeStatusOptions = [
   },
 ]
 
+function normalizeProxyName(value: string | null | undefined) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function createModeLabel(value: CreationMode) {
+  return createModeOptions.find((item) => item.value === value)?.title || '新增代理'
+}
+
+function formSnapshot() {
+  return JSON.stringify({
+    form: { ...form },
+    creationMode: creationMode.value,
+    selectedPresetKey: selectedPresetKey.value,
+    countryCodes: [...countryCodes.value],
+    tags: [...tags.value],
+    subscriptionIds: [...subscriptionIds.value],
+    nodeIds: [...nodeIds.value],
+    strategyNodeIds: [...strategyNodeIds.value],
+    antNodeIds: [...antNodeIds.value],
+    antStrategyNodeIds: [...antStrategyNodeIds.value],
+    protocolTypes: [...protocolTypes.value],
+    ipWhitelistText: ipWhitelistText.value,
+  })
+}
+
+function markFormPristine() {
+  formBaseline.value = formSnapshot()
+}
+
+function hasDraftChanges() {
+  return Boolean(formBaseline.value) && formSnapshot() !== formBaseline.value
+}
+
+async function confirmResetDraft(title = '切换配置') {
+  if (!hasDraftChanges()) return true
+  try {
+    await ElMessageBox.confirm('返回后当前已填写的表单内容会重置，是否继续？', title, {
+      type: 'warning',
+      confirmButtonText: '继续切换',
+      cancelButtonText: '取消',
+      autofocus: false,
+      customClass: 'smart-proxy-reset-confirm',
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 function resetForm() {
   Object.assign(form, {
     name: '',
@@ -1498,6 +1752,7 @@ function resetForm() {
     strategy: 'fallback',
     stability_priority: false,
     scenario: 'general',
+    data_source: 'subscription',
     source_mode: 'all',
     health_check_url: 'http://www.gstatic.com/generate_204',
     health_check_interval: 300,
@@ -1515,23 +1770,35 @@ function resetForm() {
   })
   activeDialogTab.value = 'basic'
   creationMode.value = 'quick'
+  createWizardStep.value = 'method'
   selectedPresetKey.value = ''
   countryCodes.value = []
   tags.value = []
   subscriptionIds.value = []
   nodeIds.value = []
   strategyNodeIds.value = []
+  antNodeIds.value = []
+  antStrategyNodeIds.value = []
   protocolTypes.value = []
   nodeSelectionDraft.value = []
   nodePickerMode.value = 'source'
   ipWhitelistText.value = ''
   editingId.value = null
+  formBaseline.value = ''
 }
 
 function typeLabel(value: string) {
   if (value === 'socks') return 'SOCKS5'
   if (value === 'mixed') return '混合代理'
   return 'HTTP'
+}
+
+function dataSourceLabel(value?: string) {
+  return value === 'ant' ? '蚂蚁节点' : '订阅节点'
+}
+
+function dataSourceSummary(row: SmartProxy) {
+  return `${dataSourceLabel(row.data_source)}（${row.candidate_nodes}）`
 }
 
 function endpointWithScheme(endpoint: string, scheme: 'http' | 'socks5') {
@@ -1579,6 +1846,7 @@ function readableStatusText(value?: string | null) {
     configured: '已配置',
     stopped: '已停止',
     degraded: '异常',
+    proxy_unavailable: '代理不可用',
     core_unavailable: '核心不可用',
     failed: '不可用',
     unknown: '未知',
@@ -1606,6 +1874,8 @@ function statusMessageText(value?: string | null) {
     'Smart proxy is stopped': '代理已停止',
     'Mihomo runtime group is missing; reload runtime config': 'Mihomo 运行策略组缺失，请重新应用配置',
     'Mihomo returned an unexpected delay payload': 'Mihomo 返回了无法识别的延迟数据',
+    'No runtime nodes in Mihomo group': 'Mihomo 策略组中没有运行节点',
+    'All proxy nodes are unavailable': '代理下所有节点当前不可用',
     'No candidate nodes matched this smart proxy': '没有匹配到候选节点',
     'No traffic snapshot found; traffic scheduling skipped': '暂无流量快照，已跳过流量调度',
   }
@@ -1657,7 +1927,7 @@ function resolvedApplyStatus(row: SmartProxy) {
   const configUpdatedAt = parseDateTime(row.config_updated_at)
   if (appliedAt !== null) {
     if (configUpdatedAt !== null && appliedAt + 2000 < configUpdatedAt) return 'pending'
-    if (row.status === 'degraded' && row.last_error) return 'failed'
+    if (['degraded', 'core_unavailable', 'proxy_unavailable'].includes(row.status) && row.last_error) return 'failed'
     return 'applied'
   }
   return row.apply_status || 'pending'
@@ -1676,11 +1946,11 @@ function applyStatusLabel(row: SmartProxy) {
 function applyStatusType(row: SmartProxy) {
   const types: Record<string, 'success' | 'warning' | 'danger' | 'info'> = {
     applied: 'success',
-    pending: 'warning',
+    pending: 'danger',
     failed: 'danger',
-    disabled: 'info',
+    disabled: 'danger',
   }
-  return types[resolvedApplyStatus(row)] || 'info'
+  return types[resolvedApplyStatus(row)] || 'danger'
 }
 
 function applyStatusReason(row: SmartProxy) {
@@ -1782,40 +2052,86 @@ function splitListText(value: string) {
     .filter(Boolean)
 }
 
+function nodeCacheKey(nodeId: NodeKey) {
+  return String(nodeId)
+}
+
+function activeManualIds() {
+  return isAntSource.value ? antNodeIds.value : nodeIds.value
+}
+
+function activeStrategyIds() {
+  return isAntSource.value ? antStrategyNodeIds.value : strategyNodeIds.value
+}
+
+function setActiveManualIds(values: NodeKey[]) {
+  if (isAntSource.value) {
+    antNodeIds.value = values.map((item) => String(item))
+  } else {
+    nodeIds.value = values.map((item) => Number(item)).filter((item) => Number.isInteger(item))
+  }
+}
+
+function setActiveStrategyIds(values: NodeKey[]) {
+  if (isAntSource.value) {
+    antStrategyNodeIds.value = values.map((item) => String(item))
+  } else {
+    strategyNodeIds.value = values.map((item) => Number(item)).filter((item) => Number.isInteger(item))
+  }
+}
+
 function clearManualNodes() {
-  nodeIds.value = []
+  if (isAntSource.value) antNodeIds.value = []
+  else nodeIds.value = []
   nodeSelectionDraft.value = []
-  if (form.source_mode === 'manual') strategyNodeIds.value = []
+  if (form.source_mode === 'manual') setActiveStrategyIds([])
 }
 
 function clearStrategyNodes() {
-  strategyNodeIds.value = []
+  setActiveStrategyIds([])
   if (nodePickerMode.value === 'strategy') nodeSelectionDraft.value = []
 }
 
 function pruneStrategyNodesToManualSource() {
-  if (form.source_mode !== 'manual' || !strategyNodeIds.value.length) return
-  const sourceIds = new Set(nodeIds.value)
-  strategyNodeIds.value = strategyNodeIds.value.filter((item) => sourceIds.has(item))
+  const strategyIds = activeStrategyIds()
+  if (form.source_mode !== 'manual' || !strategyIds.length) return
+  const sourceIds = new Set(activeManualIds().map((item) => String(item)))
+  setActiveStrategyIds(strategyIds.filter((item) => sourceIds.has(String(item))))
 }
 
 function clearSourceFiltersForMode(mode: string) {
+  if (isAntSource.value) {
+    subscriptionIds.value = []
+    return
+  }
   if (mode !== 'country') countryCodes.value = []
   if (mode !== 'tag') tags.value = []
   if (mode !== 'subscription') subscriptionIds.value = []
 }
 
 function onSourceFilterChange() {
-  if (!strategyNodeIds.value.length) return
-  strategyNodeIds.value = []
+  if (!activeStrategyIds().length) return
+  setActiveStrategyIds([])
   ElMessage.info('节点来源筛选已变更，策略节点选择已清空')
 }
 
 function onSourceModeChange(value: string | number | boolean | undefined) {
   const mode = String(value || 'all')
-  if (strategyNodeIds.value.length) {
-    strategyNodeIds.value = []
+  if (activeStrategyIds().length) {
+    setActiveStrategyIds([])
     ElMessage.info('节点来源已变更，策略节点选择已清空')
+  }
+  if (isAntSource.value) {
+    subscriptionIds.value = []
+    if (mode === 'manual') {
+      protocolTypes.value = []
+      return
+    }
+    if (activeManualIds().length) {
+      ElMessage.info('已切换为所有蚂蚁节点，手动选择的节点已清空')
+      clearManualNodes()
+    }
+    return
   }
   if (mode === 'manual') {
     countryCodes.value = []
@@ -1823,7 +2139,7 @@ function onSourceModeChange(value: string | number | boolean | undefined) {
     subscriptionIds.value = []
     protocolTypes.value = []
   } else {
-    if (nodeIds.value.length) {
+    if (activeManualIds().length) {
       ElMessage.info('已切换为筛选模式，手动选择的节点已清空')
       clearManualNodes()
     }
@@ -1831,28 +2147,46 @@ function onSourceModeChange(value: string | number | boolean | undefined) {
   }
 }
 
+function onDataSourceChange() {
+  form.source_mode = 'all'
+  countryCodes.value = []
+  tags.value = []
+  subscriptionIds.value = []
+  protocolTypes.value = []
+  nodeIds.value = []
+  strategyNodeIds.value = []
+  antNodeIds.value = []
+  antStrategyNodeIds.value = []
+  nodeSelectionDraft.value = []
+  selectedPresetKey.value = ''
+}
+
 function validateStrategyBeforeSave() {
-  if (form.source_mode === 'subscription' && subscriptionIds.value.length === 0) {
+  if (isAntSource.value && !metadata.ant_loaded) {
+    ElMessage.warning('请先在蚂蚁代理页登录 Ant 账号或上传 ant.db')
+    return false
+  }
+  if (!isAntSource.value && form.source_mode === 'subscription' && subscriptionIds.value.length === 0) {
     ElMessage.warning('指定订阅模式请至少选择一个订阅来源')
     return false
   }
-  if (form.source_mode === 'country' && countryCodes.value.length === 0) {
+  if (!isAntSource.value && form.source_mode === 'country' && countryCodes.value.length === 0) {
     ElMessage.warning('指定国家模式请至少选择一个国家/地区')
     return false
   }
-  if (form.source_mode === 'tag' && tags.value.length === 0) {
+  if (!isAntSource.value && form.source_mode === 'tag' && tags.value.length === 0) {
     ElMessage.warning('指定标签模式请至少选择一个节点标签')
     return false
   }
-  if (form.source_mode === 'manual' && strategyNodeIds.value.length) {
-    const sourceIds = new Set(nodeIds.value)
-    if (strategyNodeIds.value.some((item) => !sourceIds.has(item))) {
+  if (form.source_mode === 'manual' && activeStrategyIds().length) {
+    const sourceIds = new Set(activeManualIds().map((item) => String(item)))
+    if (activeStrategyIds().some((item) => !sourceIds.has(String(item)))) {
       ElMessage.warning('策略节点必须来自基础配置中的指定节点来源')
       return false
     }
   }
-  const selectedStrategyCount = strategyNodeIds.value.length
-  const knownCandidateCount = selectedStrategyCount || (form.source_mode === 'manual' ? nodeIds.value.length : null)
+  const selectedStrategyCount = activeStrategyIds().length
+  const knownCandidateCount = selectedStrategyCount || (form.source_mode === 'manual' ? activeManualIds().length : null)
   if (form.strategy === 'relay' && knownCandidateCount !== null && knownCandidateCount < 2) {
     ElMessage.warning('链式代理请在候选节点中按顺序选择至少 2 个节点')
     return false
@@ -1944,16 +2278,26 @@ function applyTrafficConfigToForm(data: SmartProxyConfig) {
   form.exclude_unknown_traffic = data.effective_exclude_unknown_traffic
 }
 
+function applyGlobalTrafficDefaultsToForm() {
+  Object.assign(form, {
+    traffic_guard_enabled: globalConfig.traffic_guard_enabled,
+    min_remaining_mb: globalConfig.min_remaining_mb,
+    low_remaining_mb: globalConfig.low_remaining_mb,
+    expire_soon_days: globalConfig.expire_soon_days,
+    exclude_unknown_traffic: globalConfig.exclude_unknown_traffic,
+  })
+}
+
 function applyPreset(preset: SmartProxyPreset) {
-  const previousPreset = metadata.presets.find((item) => item.key === selectedPresetKey.value)
-  const shouldReplaceName = !form.name || Boolean(previousPreset && form.name === previousPreset.name)
   selectedPresetKey.value = preset.key
   Object.assign(form, {
-    name: shouldReplaceName ? preset.name : form.name,
+    name: preset.key === CUSTOM_PRESET_KEY ? '' : preset.name,
+    description: '',
     proxy_type: preset.proxy_type,
     strategy: preset.strategy,
     stability_priority: preset.strategy === 'stable',
     scenario: preset.scenario,
+    data_source: preset.data_source || 'subscription',
     source_mode: preset.source_mode,
     health_check_url: preset.health_check_url,
     health_check_interval: preset.health_check_interval,
@@ -1965,9 +2309,16 @@ function applyPreset(preset: SmartProxyPreset) {
   subscriptionIds.value = []
   nodeIds.value = []
   strategyNodeIds.value = []
+  antNodeIds.value = []
+  antStrategyNodeIds.value = []
 }
 
-function onCreationModeChange(value: string | number | boolean | undefined) {
+function selectPreset(preset: SmartProxyPreset) {
+  applyPreset(preset)
+  markFormPristine()
+}
+
+function applyCreationMode(value: CreationMode) {
   if (value === 'manual') {
     const preset = metadata.presets.find((item) => item.key === selectedPresetKey.value)
     if (preset && form.name === preset.name) form.name = ''
@@ -1978,6 +2329,7 @@ function onCreationModeChange(value: string | number | boolean | undefined) {
     subscriptionIds.value = []
     protocolTypes.value = []
     strategyNodeIds.value = []
+    antStrategyNodeIds.value = []
   } else if (value === 'advanced') {
     const preset = metadata.presets.find((item) => item.key === selectedPresetKey.value)
     if (preset && form.name === preset.name) form.name = ''
@@ -1988,25 +2340,53 @@ function onCreationModeChange(value: string | number | boolean | undefined) {
     subscriptionIds.value = []
     clearManualNodes()
     strategyNodeIds.value = []
+    antStrategyNodeIds.value = []
     protocolTypes.value = []
   } else if (value === 'quick') {
-    const preset = metadata.presets[0]
-    if (preset) applyPreset(preset)
+    applyPreset(customPreset)
   }
+}
+
+function prepareCreateDraft(mode: CreationMode, preset: SmartProxyPreset = customPreset) {
+  resetForm()
+  applyGlobalTrafficDefaultsToForm()
+  creationMode.value = mode
+  if (mode === 'quick') applyPreset(preset)
+  else applyCreationMode(mode)
+  activeDialogTab.value = 'basic'
+  markFormPristine()
+}
+
+function startCreateMode(mode: CreationMode) {
+  prepareCreateDraft(mode)
+  createWizardStep.value = mode === 'quick' ? 'preset' : 'form'
+}
+
+function continueFromPreset() {
+  prepareCreateDraft('quick', selectedQuickPreset.value)
+  createWizardStep.value = 'form'
+}
+
+async function goBackInCreateWizard() {
+  if (editingId.value !== null) return
+  if (createWizardStep.value === 'form') {
+    const confirmed = await confirmResetDraft('返回上一步')
+    if (!confirmed) return
+    const currentMode = creationMode.value
+    const currentPreset = selectedQuickPreset.value
+    prepareCreateDraft(currentMode, currentPreset)
+    createWizardStep.value = currentMode === 'quick' ? 'preset' : 'method'
+    return
+  }
+  prepareCreateDraft('quick', customPreset)
+  createWizardStep.value = 'method'
 }
 
 async function openCreate() {
   resetForm()
   await Promise.all([loadMetadata(), loadGlobalConfig()])
-  Object.assign(form, {
-    traffic_guard_enabled: globalConfig.traffic_guard_enabled,
-    min_remaining_mb: globalConfig.min_remaining_mb,
-    low_remaining_mb: globalConfig.low_remaining_mb,
-    expire_soon_days: globalConfig.expire_soon_days,
-    exclude_unknown_traffic: globalConfig.exclude_unknown_traffic,
-  })
-  const preset = metadata.presets[0]
-  if (preset) applyPreset(preset)
+  prepareCreateDraft('quick', customPreset)
+  createWizardStep.value = 'method'
   dialogVisible.value = true
 }
 
@@ -2015,6 +2395,7 @@ async function openEdit(row: SmartProxy) {
   await Promise.all([loadMetadata(), loadGlobalConfig()])
   editingId.value = row.id
   creationMode.value = row.source_mode === 'manual' ? 'manual' : 'advanced'
+  createWizardStep.value = 'form'
   Object.assign(form, {
     name: row.name,
     description: row.description || '',
@@ -2024,6 +2405,7 @@ async function openEdit(row: SmartProxy) {
     strategy: row.strategy,
     stability_priority: row.strategy === 'stable',
     scenario: row.scenario,
+    data_source: row.data_source || 'subscription',
     source_mode: row.source_mode,
     health_check_url: row.health_check_url,
     health_check_interval: row.health_check_interval,
@@ -2038,17 +2420,21 @@ async function openEdit(row: SmartProxy) {
   subscriptionIds.value = [...row.subscription_ids]
   nodeIds.value = [...row.node_ids]
   strategyNodeIds.value = [...(row.strategy_node_ids || [])]
+  antNodeIds.value = [...(row.ant_node_ids || [])]
+  antStrategyNodeIds.value = [...(row.ant_strategy_node_ids || [])]
   pruneStrategyNodesToManualSource()
-  await loadNodeLabelCache([...nodeIds.value, ...strategyNodeIds.value])
+  await loadNodeLabelCache([...selectedManualNodeIds.value, ...selectedStrategyNodeIds.value])
   protocolTypes.value = [...row.protocol_types]
   ipWhitelistText.value = (row.ip_whitelist || []).join('\n')
   const { data: config } = await http.get(`/smart-proxies/${row.id}/config`)
   applyTrafficConfigToForm(config)
+  markFormPristine()
   dialogVisible.value = true
 }
 
 function payload() {
   const mode = form.source_mode
+  const antSource = isAntSource.value
   const { use_global_traffic_policy: useGlobalTrafficPolicy, ...formPayload } = form
   return {
     ...formPayload,
@@ -2062,11 +2448,13 @@ function payload() {
     low_remaining_mb: useGlobalTrafficPolicy ? null : Number(form.low_remaining_mb || 0),
     expire_soon_days: useGlobalTrafficPolicy ? null : Number(form.expire_soon_days || 0),
     exclude_unknown_traffic: useGlobalTrafficPolicy ? null : Boolean(form.exclude_unknown_traffic),
-    country_codes: mode === 'country' ? countryCodes.value.map((item) => item.trim().toUpperCase()).filter(Boolean) : [],
-    tags: mode === 'tag' ? tags.value.map((item) => item.trim()).filter(Boolean) : [],
-    subscription_ids: mode === 'subscription' ? subscriptionIds.value : [],
-    node_ids: mode === 'manual' ? nodeIds.value : [],
-    strategy_node_ids: strategyNodeIds.value,
+    country_codes: antSource || mode === 'country' ? countryCodes.value.map((item) => item.trim().toUpperCase()).filter(Boolean) : [],
+    tags: antSource || mode === 'tag' ? tags.value.map((item) => item.trim()).filter(Boolean) : [],
+    subscription_ids: !antSource && mode === 'subscription' ? subscriptionIds.value : [],
+    node_ids: !antSource && mode === 'manual' ? nodeIds.value : [],
+    strategy_node_ids: antSource ? [] : strategyNodeIds.value,
+    ant_node_ids: antSource && mode === 'manual' ? antNodeIds.value : [],
+    ant_strategy_node_ids: antSource ? antStrategyNodeIds.value : [],
     protocol_types: mode === 'manual' ? [] : protocolTypes.value.map((item) => item.trim().toLowerCase()).filter(Boolean),
     ip_whitelist: splitListText(ipWhitelistText.value),
   }
@@ -2077,7 +2465,12 @@ async function save() {
     ElMessage.warning('请填写代理名称')
     return
   }
-  if (form.source_mode === 'manual' && nodeIds.value.length === 0) {
+  if (proxyNameError.value) {
+    ElMessage.warning(proxyNameError.value)
+    activeDialogTab.value = 'basic'
+    return
+  }
+  if (form.source_mode === 'manual' && activeManualIds().length === 0) {
     ElMessage.warning('手动节点模式请至少选择一个节点')
     return
   }
@@ -2093,6 +2486,49 @@ async function save() {
 async function loadNodeOptions() {
   nodePickerLoading.value = true
   try {
+    if (isAntSource.value) {
+      const { data } = await http.get('/ant-proxy/nodes')
+      let items = data.items.map((item: any) => ({
+        id: String(item.id),
+        name: item.name,
+        type: item.transport || item.cipher || 'ant',
+        server: item.server,
+        port: item.port,
+        country: item.country || item.city || null,
+        country_code: item.country_code || null,
+        tags: [`line:${item.line_type}`, item.line_label, `source:${item.source}`].filter(Boolean),
+        latency: item.latency_ms,
+        source_subscription_id: null,
+        source_subscription_name: item.line_label || item.source || '蚂蚁代理',
+        source_group: item.source || item.group || '',
+        enabled: true,
+      })) as NodeItem[]
+      const q = nodeQ.value.trim().toLowerCase()
+      if (q) {
+        items = items.filter((item) =>
+          [item.name, item.server, item.source_subscription_name, item.source_group, item.country, item.country_code]
+            .join(' ')
+            .toLowerCase()
+            .includes(q),
+        )
+      }
+      if (nodeCountry.value) {
+        items = items.filter((item) => String(item.country_code || '').toUpperCase() === nodeCountry.value.toUpperCase())
+      }
+      if (nodeGroup.value.trim()) {
+        const group = nodeGroup.value.trim().toLowerCase()
+        items = items.filter((item) =>
+          [item.source_subscription_name, item.source_group, ...(item.tags || [])].join(' ').toLowerCase().includes(group),
+        )
+      }
+      items = items.filter((item) => antNodeMatchesExtraFilters(item))
+      items.forEach((item) => {
+        nodeCache.value[nodeCacheKey(item.id)] = item
+      })
+      nodeOptions.value = nodePickerMode.value === 'strategy' ? items.filter((item) => sourceNodeMatches(item)) : items
+      return
+    }
+
     const { data } = await http.get('/nodes', {
       params: {
         q: nodeQ.value || undefined,
@@ -2103,7 +2539,7 @@ async function loadNodeOptions() {
     })
     const items = data.items.filter((item: NodeItem) => Number.isInteger(item.id))
     items.forEach((item: NodeItem) => {
-      nodeCache.value[item.id] = item
+      nodeCache.value[nodeCacheKey(item.id)] = item
     })
     nodeOptions.value = nodePickerMode.value === 'strategy'
       ? items.filter((item: NodeItem) => sourceNodeMatches(item))
@@ -2113,13 +2549,39 @@ async function loadNodeOptions() {
   }
 }
 
-async function loadNodeLabelCache(nodeIdsToLoad: number[]) {
-  const missingIds = [...new Set(nodeIdsToLoad)].filter((nodeId) => Number.isInteger(nodeId) && !nodeCache.value[nodeId])
+async function loadNodeLabelCache(nodeIdsToLoad: NodeKey[]) {
+  const missingIds = [...new Set(nodeIdsToLoad)].filter((nodeId) => !nodeCache.value[nodeCacheKey(nodeId)])
   if (!missingIds.length) return
+  if (isAntSource.value) {
+    try {
+      const { data } = await http.get('/ant-proxy/nodes')
+      data.items.forEach((item: any) => {
+        const node: NodeItem = {
+          id: String(item.id),
+          name: item.name,
+          type: item.transport || item.cipher || 'ant',
+          server: item.server,
+          port: item.port,
+          country: item.country || item.city || null,
+          country_code: item.country_code || null,
+          tags: [`line:${item.line_type}`, item.line_label, `source:${item.source}`].filter(Boolean),
+          latency: item.latency_ms,
+          source_subscription_id: null,
+          source_subscription_name: item.line_label || item.source || '蚂蚁代理',
+          source_group: item.source || item.group || '',
+          enabled: true,
+        }
+        nodeCache.value[nodeCacheKey(node.id)] = node
+      })
+    } catch {
+      // Ant 节点尚未加载时保留原始 ID 标签。
+    }
+    return
+  }
   const { data } = await http.get('/nodes')
   const items = data.items.filter((item: NodeItem) => Number.isInteger(item.id))
   items.forEach((item: NodeItem) => {
-    nodeCache.value[item.id] = item
+    nodeCache.value[nodeCacheKey(item.id)] = item
   })
 }
 
@@ -2127,13 +2589,33 @@ function normalizedProtocolTypes() {
   return protocolTypes.value.map((item) => item.trim().toLowerCase()).filter(Boolean)
 }
 
+function antNodeMatchesExtraFilters(node: NodeItem) {
+  if (!isAntSource.value) return true
+  if (countryCodes.value.length) {
+    const selectedCountries = countryCodes.value.map((item) => item.trim().toUpperCase()).filter(Boolean)
+    if (!selectedCountries.includes(String(node.country_code || '').toUpperCase())) return false
+  }
+  if (tags.value.length) {
+    const selectedTags = new Set(tags.value.map((item) => item.trim()).filter(Boolean))
+    if (!(node.tags || []).some((item) => selectedTags.has(String(item).trim()))) return false
+  }
+  const protocols = normalizedProtocolTypes()
+  if (protocols.length && !protocols.includes(String(node.type || '').toLowerCase())) return false
+  return true
+}
+
 function sourceNodeMatches(node: NodeItem) {
   if (!node.enabled) return false
+  if (isAntSource.value) {
+    if (!antNodeMatchesExtraFilters(node)) return false
+    if (form.source_mode === 'manual') return activeManualIds().map((item) => String(item)).includes(String(node.id))
+    return true
+  }
   if (form.source_mode !== 'manual') {
     const protocols = normalizedProtocolTypes()
     if (protocols.length && !protocols.includes(String(node.type || '').toLowerCase())) return false
   }
-  if (form.source_mode === 'manual') return nodeIds.value.includes(node.id)
+  if (form.source_mode === 'manual') return activeManualIds().map((item) => String(item)).includes(String(node.id))
   if (form.source_mode === 'subscription') {
     if (!subscriptionIds.value.length) return false
     return node.source_subscription_id !== null && node.source_subscription_id !== undefined && subscriptionIds.value.includes(Number(node.source_subscription_id))
@@ -2154,12 +2636,12 @@ function sourceNodeMatches(node: NodeItem) {
 async function openNodePicker(mode: NodePickerMode = 'source') {
   await loadMetadata()
   nodePickerMode.value = mode
-  nodeSelectionDraft.value = mode === 'strategy' ? [...strategyNodeIds.value] : [...nodeIds.value]
+  nodeSelectionDraft.value = mode === 'strategy' ? [...activeStrategyIds()] : [...activeManualIds()]
   nodePickerVisible.value = true
   await loadNodeOptions()
 }
 
-function toggleNodeDraft(nodeId: number, checked: boolean) {
+function toggleNodeDraft(nodeId: NodeKey, checked: boolean) {
   if (checked && !nodeSelectionDraft.value.includes(nodeId)) {
     nodeSelectionDraft.value.push(nodeId)
   } else if (!checked) {
@@ -2167,17 +2649,17 @@ function toggleNodeDraft(nodeId: number, checked: boolean) {
   }
 }
 
-function handleNodeDraftChange(nodeId: number, checked: boolean | string | number) {
+function handleNodeDraftChange(nodeId: NodeKey, checked: boolean | string | number) {
   toggleNodeDraft(nodeId, Boolean(checked))
 }
 
 function confirmNodeSelection() {
   if (nodePickerMode.value === 'strategy') {
-    strategyNodeIds.value = [...nodeSelectionDraft.value]
+    setActiveStrategyIds([...nodeSelectionDraft.value])
     nodePickerVisible.value = false
     return
   }
-  nodeIds.value = [...nodeSelectionDraft.value]
+  setActiveManualIds([...nodeSelectionDraft.value])
   form.source_mode = 'manual'
   pruneStrategyNodesToManualSource()
   creationMode.value = 'manual'
@@ -2185,19 +2667,20 @@ function confirmNodeSelection() {
   nodePickerVisible.value = false
 }
 
-function removeSelectedNode(nodeId: number) {
-  nodeIds.value = nodeIds.value.filter((item) => item !== nodeId)
+function removeSelectedNode(nodeId: NodeKey) {
+  setActiveManualIds(activeManualIds().filter((item) => item !== nodeId))
   nodeSelectionDraft.value = nodeSelectionDraft.value.filter((item) => item !== nodeId)
-  strategyNodeIds.value = strategyNodeIds.value.filter((item) => item !== nodeId)
+  setActiveStrategyIds(activeStrategyIds().filter((item) => item !== nodeId))
 }
 
 function moveSelectedNode(index: number, direction: -1 | 1) {
   const nextIndex = index + direction
-  if (nextIndex < 0 || nextIndex >= nodeIds.value.length) return
-  const next = [...nodeIds.value]
+  const current = activeManualIds()
+  if (nextIndex < 0 || nextIndex >= current.length) return
+  const next = [...current]
   const [item] = next.splice(index, 1)
   next.splice(nextIndex, 0, item)
-  nodeIds.value = next
+  setActiveManualIds(next)
   nodeSelectionDraft.value = [...next]
 }
 
@@ -2205,8 +2688,8 @@ function clearSelectedNodes() {
   clearManualNodes()
 }
 
-function removeStrategyNode(nodeId: number) {
-  strategyNodeIds.value = strategyNodeIds.value.filter((item) => item !== nodeId)
+function removeStrategyNode(nodeId: NodeKey) {
+  setActiveStrategyIds(activeStrategyIds().filter((item) => item !== nodeId))
   if (nodePickerMode.value === 'strategy') {
     nodeSelectionDraft.value = nodeSelectionDraft.value.filter((item) => item !== nodeId)
   }
@@ -2214,16 +2697,17 @@ function removeStrategyNode(nodeId: number) {
 
 function moveStrategyNode(index: number, direction: -1 | 1) {
   const nextIndex = index + direction
-  if (nextIndex < 0 || nextIndex >= strategyNodeIds.value.length) return
-  const next = [...strategyNodeIds.value]
+  const current = activeStrategyIds()
+  if (nextIndex < 0 || nextIndex >= current.length) return
+  const next = [...current]
   const [item] = next.splice(index, 1)
   next.splice(nextIndex, 0, item)
-  strategyNodeIds.value = next
+  setActiveStrategyIds(next)
   if (nodePickerMode.value === 'strategy') nodeSelectionDraft.value = [...next]
 }
 
-function nodeLabelById(nodeId: number) {
-  const node = nodeOptions.value.find((item) => item.id === nodeId) || nodeCache.value[nodeId]
+function nodeLabelById(nodeId: NodeKey) {
+  const node = nodeOptions.value.find((item) => item.id === nodeId) || nodeCache.value[nodeCacheKey(nodeId)]
   return node ? `${node.name} #${node.id}` : `#${nodeId}`
 }
 
@@ -2388,9 +2872,7 @@ function formatRate(value?: number | null) {
 
 function statusTag(value?: string | null) {
   if (value === 'running' || value === 'ok' || value === 'online' || value === 'healthy') return 'success'
-  if (value === 'stopped' || value === 'configured' || value === 'unknown') return 'info'
-  if (value === 'degraded' || value === 'core_unavailable' || value === 'failed') return 'danger'
-  return 'warning'
+  return 'danger'
 }
 
 async function copy(value: string) {
@@ -2430,8 +2912,310 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-.smart-proxy-mode {
-  margin-bottom: 14px;
+.proxy-name-cell {
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.proxy-name-cell strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--heading);
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxy-name-cell :deep(.el-tag) {
+  flex: 0 0 auto;
+}
+
+.current-node-cell {
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.current-node-cell > span {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--heading);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.current-node-cell :deep(.el-button) {
+  min-height: auto;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+:global(.smart-proxy-dialog .el-dialog__header) {
+  border-bottom: 0;
+}
+
+:global(.smart-proxy-dialog .el-dialog__body) {
+  padding-top: 4px;
+}
+
+:global(.smart-proxy-dialog .el-dialog__footer) {
+  border-top: 0;
+  padding-top: 12px;
+}
+
+:global(.smart-proxy-reset-confirm .el-message-box__header) {
+  border-bottom: 0;
+}
+
+:global(.smart-proxy-reset-confirm .el-message-box__content) {
+  padding-top: 4px;
+  padding-bottom: 6px;
+}
+
+:global(.smart-proxy-reset-confirm .el-message-box__btns) {
+  border-top: 0;
+  padding-top: 10px;
+}
+
+.create-wizard {
+  display: grid;
+  gap: 14px;
+}
+
+.wizard-stepper {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+  list-style: none;
+}
+
+.wizard-stepper li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--el-text-color-secondary);
+}
+
+.wizard-stepper li.active {
+  background: var(--el-bg-color);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 46%, transparent);
+}
+
+.wizard-stepper li.done {
+  color: var(--el-color-success);
+}
+
+.wizard-step-index {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.wizard-stepper li.active .wizard-step-index {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.wizard-stepper li.done .wizard-step-index {
+  border-color: var(--el-color-success);
+  background: var(--el-color-success);
+  color: #fff;
+}
+
+.wizard-step-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wizard-section {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--el-border-color) 78%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--el-fill-color-lighter) 62%, var(--el-bg-color));
+}
+
+.wizard-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.wizard-section-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.wizard-section-head em {
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.wizard-section-head strong {
+  color: var(--el-text-color-primary);
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.wizard-section-head span {
+  max-width: 520px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.45;
+  text-align: right;
+}
+
+.wizard-option-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.wizard-option-card {
+  display: flex;
+  min-width: 0;
+  min-height: 124px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-primary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.wizard-option-card:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--el-bg-color));
+  box-shadow: var(--dashboard-shadow);
+}
+
+.wizard-option-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.wizard-option-title {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.wizard-option-arrow {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, transparent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.wizard-option-desc {
+  flex: 1;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
+
+.wizard-option-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wizard-preset-grid {
+  margin-bottom: 0;
+}
+
+.create-form-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.create-form-summary div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.create-form-summary strong {
+  color: var(--el-text-color-primary);
+}
+
+.create-form-summary span {
+  min-width: 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.summary-back-button {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+
+.smart-proxy-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.smart-proxy-dialog-footer :deep(.el-button) {
+  margin-left: 0;
 }
 
 .proxy-dialog-tabs {
@@ -2453,7 +3237,7 @@ onBeforeUnmount(() => {
 
 .preset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 10px;
   margin-bottom: 16px;
 }
@@ -2463,23 +3247,28 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  min-height: 128px;
-  padding: 14px;
+  min-height: 116px;
+  padding: 13px;
   border: 1px solid var(--el-border-color);
   border-radius: 8px;
   background: var(--el-bg-color);
   color: var(--el-text-color-primary);
   text-align: left;
   cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    box-shadow 0.16s ease;
 }
 
 .preset-card:hover,
 .preset-card.active {
-  border-color: var(--el-color-primary);
+  border-color: var(--accent);
 }
 
 .preset-card.active {
-  background: var(--el-color-primary-light-9);
+  background: color-mix(in srgb, var(--accent) 8%, var(--el-bg-color));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 .preset-title {
@@ -2540,6 +3329,139 @@ onBeforeUnmount(() => {
   width: 24px;
   height: 24px;
   min-height: 24px;
+}
+
+.smart-proxy-mobile-card {
+  display: grid;
+  gap: 12px;
+}
+
+.smart-proxy-mobile-card .mobile-card-head,
+.smart-proxy-mobile-card .mobile-kv,
+.smart-proxy-mobile-card .mobile-card-actions {
+  margin-top: 0;
+}
+
+.smart-proxy-mobile-card .mobile-card-head {
+  align-items: flex-start;
+}
+
+.smart-proxy-mobile-card .mobile-card-head > :deep(.el-tag) {
+  flex: 0 0 auto;
+}
+
+.smart-proxy-mobile-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.smart-proxy-mobile-summary-item {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel) 58%, var(--panel-soft));
+  padding: 9px 10px;
+}
+
+.smart-proxy-mobile-summary-item > span,
+.smart-proxy-mobile-section-head,
+.smart-proxy-mobile-current-copy span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.smart-proxy-mobile-summary-item > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--heading);
+  font-size: 13px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.smart-proxy-mobile-summary-item :deep(.el-tag) {
+  justify-self: start;
+  max-width: 100%;
+}
+
+.smart-proxy-mobile-summary-item :deep(.el-tag__content) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.smart-proxy-mobile-section {
+  display: grid;
+  min-width: 0;
+  gap: 9px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-soft) 94%, var(--accent) 6%), var(--panel-soft)),
+    var(--panel-soft);
+  padding: 10px;
+}
+
+.smart-proxy-mobile-card .mobile-endpoint-list {
+  align-items: stretch;
+  gap: 8px;
+}
+
+.smart-proxy-mobile-card .mobile-endpoint-list .endpoint-row {
+  width: 100%;
+  max-width: none;
+  grid-template-columns: 74px minmax(0, 1fr) 28px;
+}
+
+.smart-proxy-mobile-current {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+}
+
+.smart-proxy-mobile-current-copy {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.smart-proxy-mobile-current-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--heading);
+  font-size: 13px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.smart-proxy-mobile-current :deep(.el-button) {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.smart-proxy-mobile-note {
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  padding-top: 10px;
+}
+
+.smart-proxy-mobile-note div {
+  grid-template-columns: 48px minmax(0, 1fr);
 }
 
 .diagnosis-section-title {
@@ -2864,6 +3786,87 @@ onBeforeUnmount(() => {
     display: inline;
   }
 
+  .create-wizard {
+    min-height: 0;
+    gap: 12px;
+  }
+
+  .wizard-stepper {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+    padding: 6px;
+  }
+
+  .wizard-stepper li {
+    gap: 6px;
+    min-height: 34px;
+    padding: 5px 6px;
+  }
+
+  .wizard-step-index {
+    width: 20px;
+    height: 20px;
+  }
+
+  .wizard-step-text {
+    font-size: 12px;
+  }
+
+  .wizard-section {
+    padding: 12px;
+  }
+
+  .wizard-section-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .wizard-section-head span {
+    max-width: none;
+    text-align: left;
+  }
+
+  .wizard-option-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .wizard-option-card {
+    min-height: 118px;
+    padding: 14px;
+  }
+
+  .create-form-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .create-form-summary .summary-back-button {
+    align-self: flex-start;
+    min-height: 34px;
+    padding: 0 12px;
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--el-border-color));
+    background: color-mix(in srgb, var(--accent) 7%, var(--el-bg-color));
+    color: var(--accent);
+    font-weight: 650;
+  }
+
+  .smart-proxy-dialog-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .smart-proxy-dialog-footer :deep(.el-button) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .smart-proxy-dialog-footer :deep(.el-button:last-child:nth-child(odd)) {
+    grid-column: 1 / -1;
+  }
+
   .diagnosis-guide {
     grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
@@ -3113,6 +4116,10 @@ onBeforeUnmount(() => {
   }
 
   .diagnosis-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .smart-proxy-dialog-footer {
     grid-template-columns: minmax(0, 1fr);
   }
 

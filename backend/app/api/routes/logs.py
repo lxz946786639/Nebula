@@ -17,6 +17,7 @@ RESOURCE_LABELS = {
     "subscription": "订阅",
     "node_pool": "节点池",
     "node": "节点",
+    "ant_proxy": "蚂蚁代理",
     "smart_proxy": "智能代理",
     "smart_proxy_config": "智能代理配置",
     "settings": "系统配置",

@@ -114,14 +114,17 @@
           <h2>代理地址列表</h2>
         </div>
         <div class="url-list">
-          <div v-for="item in proxyAddressRows" :key="item.id" class="url-row">
-            <div>
-              <strong>{{ item.name }}（{{ item.typeLabel }}）</strong>
-              <code>{{ item.url }}</code>
+          <article v-for="group in proxyAddressGroups" :key="group.id" class="url-group">
+            <strong class="url-group-title">{{ group.name }}</strong>
+            <div class="url-group-endpoints">
+              <div v-for="endpoint in group.endpoints" :key="endpoint.scheme" class="url-endpoint-row">
+                <span class="url-endpoint-label">{{ endpoint.label }}</span>
+                <code>{{ endpoint.url }}</code>
+                <el-button :icon="DocumentCopy" circle :title="`复制${endpoint.label}地址`" @click="copy(endpoint.url)" />
+              </div>
             </div>
-            <el-button :icon="DocumentCopy" circle :title="`复制${item.typeLabel}地址`" @click="copy(item.url)" />
-          </div>
-          <el-empty v-if="!proxyAddressRows.length" description="暂无代理地址" :image-size="72" />
+          </article>
+          <el-empty v-if="!proxyAddressGroups.length" description="暂无代理地址" :image-size="72" />
         </div>
       </section>
     </section>
@@ -180,15 +183,12 @@ const stats = reactive({
 })
 const proxyAddresses = ref<ProxyAddress[]>([])
 const loading = ref(false)
-const proxyAddressRows = computed(() =>
-  proxyAddresses.value.flatMap((item) =>
-    proxyEndpointOptions(item).map((endpoint) => ({
-      id: `${item.id}-${endpoint.scheme}`,
-      name: item.name,
-      typeLabel: endpoint.label,
-      url: endpoint.url,
-    }))
-  )
+const proxyAddressGroups = computed(() =>
+  proxyAddresses.value.map((item) => ({
+    id: item.id,
+    name: item.name,
+    endpoints: proxyEndpointOptions(item),
+  }))
 )
 const { connect: connectStatusSocket, stop: stopStatusSocket } = useStatusSocket((message) => {
   if (message.dashboard && typeof message.dashboard === 'object') {

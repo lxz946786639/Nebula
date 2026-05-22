@@ -8,7 +8,8 @@
         <el-button type="primary" :icon="Plus" @click="openCreate">新增订阅</el-button>
       </div>
     </div>
-    <el-table class="list-table desktop-table" :data="items" stripe height="100%">
+    <div class="table-wrap has-cards desktop-table">
+      <el-table class="list-table" :data="items" stripe height="100%">
       <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
       <el-table-column prop="group_name" label="分组" width="120" />
       <el-table-column prop="priority" label="优先级" width="90" />
@@ -47,15 +48,18 @@
       <el-table-column label="最近更新时间" width="180">
         <template #default="{ row }">{{ formatDateTime(row.last_updated_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="146" fixed="right" class-name="table-cell-actions" header-class-name="table-cell-actions">
         <template #default="{ row }">
-          <el-button :icon="Refresh" circle title="刷新订阅" @click="refresh(row.id)" />
-          <el-button :icon="Edit" circle title="编辑订阅" @click="openEdit(row)" />
-          <el-button :icon="Delete" circle title="删除订阅" type="danger" @click="remove(row.id)" />
+          <div class="table-action-icons">
+            <el-button :icon="Refresh" circle title="刷新订阅" @click="refresh(row.id)" />
+            <el-button :icon="Edit" circle title="编辑订阅" @click="openEdit(row)" />
+            <el-button :icon="Delete" circle title="删除订阅" type="danger" @click="remove(row.id)" />
+          </div>
         </template>
       </el-table-column>
-    </el-table>
-    <div class="mobile-card-list">
+      </el-table>
+    </div>
+    <div class="mobile-card-list data-cards">
       <el-empty v-if="!items.length" description="暂无订阅" :image-size="72" />
       <article v-for="row in items" v-else :key="row.id" class="mobile-card">
         <div class="mobile-card-head">

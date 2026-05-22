@@ -101,28 +101,24 @@
     </div>
 
     <template v-else>
-    <div class="toolbar ant-toolbar">
-      <div class="toolbar-filters ant-toolbar-fields">
-        <el-input v-model="listenHost" class="ant-host-input" placeholder="监听地址" />
-        <el-input-number v-model="listenPort" :min="1" :max="65535" controls-position="right" />
-        <el-input v-model="keyword" class="toolbar-filter-search" clearable placeholder="搜索节点" />
+      <div class="toolbar ant-toolbar">
+        <div class="toolbar-filters ant-toolbar-fields">
+          <el-input v-model="keyword" class="toolbar-filter-search" clearable placeholder="搜索节点" />
+          <el-radio-group v-model="activeLine" class="ant-line-filter" @change="handleLineChange">
+            <el-radio-button label="free">免费专线 {{ status.free_node_count }}</el-radio-button>
+            <el-radio-button label="paid">付费专线 {{ status.paid_node_count }}</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div class="toolbar-actions">
+          <el-button :icon="UserFilled" @click="beginRelogin">重新登录</el-button>
+          <el-button v-if="canRefreshRemote" :icon="Refresh" :loading="refreshing" :disabled="loading" @click="refreshNodes()">刷新</el-button>
+          <el-button :icon="Setting" @click="openScheduleDialog">定时刷新</el-button>
+          <el-button type="primary" :icon="Connection" @click="goSmartProxies">智能代理</el-button>
+          <el-button :icon="Aim" :loading="latencyLoading" @click="measureLatencies()">测速</el-button>
+        </div>
       </div>
-      <div class="toolbar-actions">
-        <el-button :icon="UserFilled" @click="beginRelogin">重新登录</el-button>
-        <el-button v-if="canRefreshRemote" :icon="Refresh" :loading="refreshing" :disabled="loading" @click="refreshNodes()">刷新</el-button>
-        <el-button v-if="status.running" type="warning" :icon="VideoPause" :loading="acting" @click="stopProxy">停止</el-button>
-        <el-button v-else type="success" :icon="VideoPlay" :loading="acting" @click="startProxy()">启动</el-button>
-        <el-button :icon="Aim" :loading="latencyLoading" @click="measureLatencies()">测速</el-button>
-        <el-button :icon="Connection" :loading="testing" @click="testProxy">测试</el-button>
-      </div>
-    </div>
 
-    <el-radio-group v-model="activeLine" class="ant-line-tabs" @change="loadNodesOnly">
-      <el-radio-button label="free">免费专线 {{ status.free_node_count }}</el-radio-button>
-      <el-radio-button label="paid">付费专线 {{ status.paid_node_count }}</el-radio-button>
-    </el-radio-group>
-
-    <el-descriptions class="desktop-summary ant-summary" :column="4" border>
+      <el-descriptions class="desktop-summary ant-summary" :column="4" border>
       <el-descriptions-item label="登录状态">
         <el-tag :type="status.logged_in ? 'success' : 'warning'">{{ status.logged_in ? '已检测' : '未检测' }}</el-tag>
       </el-descriptions-item>
@@ -133,16 +129,11 @@
       <el-descriptions-item label="状态保存">
         <el-tag :type="status.persisted ? 'success' : 'warning'">{{ status.persisted ? '已持久化' : '未保存' }}</el-tag>
       </el-descriptions-item>
-      <el-descriptions-item label="内置代理">
-        <el-tag :type="status.running ? 'success' : 'info'">{{ status.running ? '运行中' : '已停止' }}</el-tag>
-      </el-descriptions-item>
-      <el-descriptions-item label="地址">
-        <span class="endpoint-inline">
-          {{ status.endpoint }}
-          <el-button :icon="DocumentCopy" circle size="small" title="复制代理地址" @click="copy(status.endpoint)" />
-        </span>
+      <el-descriptions-item label="智能代理">
+        <el-tag :type="antSmartProxies.length ? 'success' : 'info'">{{ antSmartProxies.length }} 个</el-tag>
       </el-descriptions-item>
       <el-descriptions-item label="连接">{{ status.active_connections }} / {{ status.total_connections }}</el-descriptions-item>
+      <el-descriptions-item label="内部适配器">{{ status.adapter_count }}</el-descriptions-item>
       <el-descriptions-item label="流量">{{ formatBytes(status.upload_bytes) }} / {{ formatBytes(status.download_bytes) }}</el-descriptions-item>
     </el-descriptions>
 
@@ -152,8 +143,8 @@
         <strong>{{ status.logged_in ? '已检测' : '未检测' }}</strong>
       </div>
       <div class="mobile-summary-item">
-        <span>内置代理</span>
-        <strong>{{ status.running ? '运行中' : '已停止' }}</strong>
+        <span>智能代理</span>
+        <strong>{{ antSmartProxies.length }}</strong>
       </div>
       <div class="mobile-summary-item">
         <span>节点</span>
@@ -165,18 +156,43 @@
       </div>
     </div>
 
+    <section class="ant-smart-proxies">
+      <div class="ant-smart-proxies-head">
+        <strong>智能代理地址</strong>
+        <span>在智能代理中选择“蚂蚁节点”后会显示在这里</span>
+      </div>
+      <el-empty v-if="!antSmartProxyAddressGroups.length" description="暂无蚂蚁节点智能代理" :image-size="72">
+        <el-button type="primary" @click="goSmartProxies">去智能代理新增</el-button>
+      </el-empty>
+      <div v-else class="ant-smart-proxy-grid">
+        <article v-for="group in antSmartProxyAddressGroups" :key="group.id" class="ant-smart-proxy-item">
+          <div class="ant-smart-proxy-title">
+            <strong>{{ group.name }}</strong>
+            <el-tag size="small" :type="group.enabled ? 'success' : 'info'" effect="plain">{{ group.enabled ? '启用' : '停用' }}</el-tag>
+          </div>
+          <div class="ant-smart-proxy-endpoints">
+            <div v-for="endpoint in group.endpoints" :key="endpoint.scheme" class="ant-smart-proxy-endpoint">
+              <span class="ant-smart-proxy-scheme">{{ endpoint.label }}</span>
+              <code class="ant-smart-proxy-url">{{ endpoint.url }}</code>
+              <el-button class="ant-smart-proxy-copy" :icon="DocumentCopy" circle size="small" title="复制代理地址" @click="copy(endpoint.url)" />
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <div class="ant-current">
       <div>
-        <span>当前节点</span>
-        <strong>{{ status.selected_node?.name || '-' }}</strong>
+        <span>当前线路</span>
+        <strong>{{ activeLineText }}</strong>
       </div>
       <div>
-        <span>协议</span>
-        <strong>{{ selectedTransport }}</strong>
+        <span>节点</span>
+        <strong>{{ lineSummary }}</strong>
       </div>
       <div>
-        <span>远端</span>
-        <strong>{{ selectedEndpoint }}</strong>
+        <span>延迟检测</span>
+        <strong>{{ latencyTestText }}</strong>
       </div>
       <div>
         <span>最近状态</span>
@@ -184,11 +200,11 @@
       </div>
     </div>
 
-    <el-table class="list-table desktop-table" :data="filteredNodes" stripe height="100%" empty-text="暂无 Ant 节点">
+    <div class="table-wrap has-cards desktop-table">
+      <el-table class="list-table" :data="filteredNodes" stripe height="100%" empty-text="暂无 Ant 节点">
       <el-table-column label="节点" min-width="190" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="node-name-cell">
-            <el-tag v-if="row.selected" size="small" type="success" effect="plain">当前</el-tag>
             {{ row.name }}
           </span>
         </template>
@@ -217,17 +233,10 @@
       <el-table-column label="来源" width="150">
         <template #default="{ row }">{{ row.line_label }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
-        <template #default="{ row }">
-          <el-space :size="6" wrap>
-            <el-button link type="primary" :icon="Switch" :disabled="row.selected" @click="selectNode(row.id)">切换</el-button>
-            <el-button link type="success" :icon="VideoPlay" @click="startProxy(row.id)">启用</el-button>
-          </el-space>
-        </template>
-      </el-table-column>
-    </el-table>
+      </el-table>
+    </div>
 
-    <div class="mobile-card-list">
+    <div class="mobile-card-list data-cards">
       <el-empty v-if="!filteredNodes.length" description="暂无 Ant 节点" :image-size="72" />
       <article v-for="node in filteredNodes" v-else :key="node.id" class="mobile-card">
         <div class="mobile-card-head">
@@ -235,7 +244,7 @@
             <strong>{{ node.name }}</strong>
             <span>{{ regionText(node) }} · {{ node.server }}:{{ node.port }}</span>
           </div>
-          <el-tag :type="node.selected ? 'success' : 'info'" effect="plain">{{ node.selected ? '当前' : node.transport || 'tcp' }}</el-tag>
+          <el-tag type="info" effect="plain">{{ node.transport || 'tcp' }}</el-tag>
         </div>
         <dl class="mobile-kv">
           <div>
@@ -251,24 +260,55 @@
             <dd>{{ latencyText(node.latency_ms) }}</dd>
           </div>
         </dl>
-        <div class="mobile-card-actions">
-          <el-button :icon="Switch" :disabled="node.selected" @click="selectNode(node.id)">切换</el-button>
-          <el-button :icon="VideoPlay" type="success" @click="startProxy(node.id)">启用</el-button>
-        </div>
       </article>
     </div>
     </template>
   </section>
+
+  <el-dialog v-model="scheduleDialogVisible" title="后台定时刷新" width="520px">
+    <el-form class="ant-schedule-form" label-position="top">
+      <el-form-item label="自动刷新">
+        <el-switch v-model="scheduleForm.enabled" active-text="启用" inactive-text="关闭" inline-prompt />
+      </el-form-item>
+      <el-form-item label="刷新间隔（小时）">
+        <el-input-number
+          v-model="scheduleForm.intervalHours"
+          :disabled="!scheduleForm.enabled"
+          :min="1"
+          :max="720"
+          controls-position="right"
+          style="width: 100%"
+        />
+      </el-form-item>
+      <el-alert
+        :closable="false"
+        show-icon
+        type="info"
+        title="后台任务仅刷新账号登录的节点；ant.db 登录仍需重新上传文件。"
+      />
+      <el-descriptions class="ant-schedule-summary" :column="1" border>
+        <el-descriptions-item label="当前状态">{{ scheduleStatusText }}</el-descriptions-item>
+        <el-descriptions-item label="最近刷新">{{ formatScheduleTime(scheduleConfig?.last_refreshed_at) }}</el-descriptions-item>
+        <el-descriptions-item label="预计下次">{{ formatScheduleTime(scheduleConfig?.next_refresh_at) }}</el-descriptions-item>
+      </el-descriptions>
+    </el-form>
+    <template #footer>
+      <el-button @click="scheduleDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="scheduleSaving" @click="saveScheduleConfig">保存</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { Aim, Connection, DocumentCopy, Lock, Refresh, Switch, UploadFilled, User, UserFilled, VideoPause, VideoPlay } from '@element-plus/icons-vue'
+import { Aim, Connection, DocumentCopy, Lock, Refresh, Setting, UploadFilled, User, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import http from '@/api/http'
 import { copyText } from '@/utils/clipboard'
+import { formatDateTime } from '@/utils/datetime'
 
 interface AntProxyUser {
   logged_in: boolean
@@ -326,6 +366,12 @@ interface AntProxyStatus {
   listen_host: string
   listen_port: number
   endpoint: string
+  runtime_mode: string
+  mihomo_group: string
+  adapter_count: number
+  health_check_url: string
+  health_check_interval: number
+  tolerance: number
   active_connections: number
   total_connections: number
   upload_bytes: number
@@ -338,6 +384,36 @@ interface AntProxyStatus {
   last_error: string | null
 }
 
+interface SmartProxy {
+  id: number
+  name: string
+  proxy_type: string
+  listen_host: string
+  port: number
+  data_source: 'subscription' | 'ant'
+  enabled: boolean
+  endpoint: string
+}
+
+interface AntProxyCachePayload {
+  version: 1
+  status: AntProxyStatus
+  activeLine: 'free' | 'paid'
+  nodesByLine: Partial<Record<'free' | 'paid', AntProxyNode[]>>
+  antSmartProxies: SmartProxy[]
+  lastTest: string
+  autoRefreshed: boolean
+  savedAt: number
+}
+
+interface AntProxyScheduleConfig {
+  enabled: boolean
+  interval_minutes: number
+  last_refreshed_at: string | null
+  next_refresh_at: string | null
+}
+
+const ANT_PROXY_CACHE_KEY = 'nebula:ant-proxy:session-cache:v1'
 const emptyUser: AntProxyUser = {
   logged_in: false,
   oauth_id: '',
@@ -370,8 +446,14 @@ const status = reactive<AntProxyStatus>({
   selected_node: null,
   running: false,
   listen_host: '127.0.0.1',
-  listen_port: 18080,
-  endpoint: 'socks5://127.0.0.1:18080',
+  listen_port: 37890,
+  endpoint: 'socks5://127.0.0.1:37890',
+  runtime_mode: 'mihomo',
+  mihomo_group: '',
+  adapter_count: 0,
+  health_check_url: 'http://www.gstatic.com/generate_204',
+  health_check_interval: 300,
+  tolerance: 100,
   active_connections: 0,
   total_connections: 0,
   upload_bytes: 0,
@@ -384,33 +466,58 @@ const status = reactive<AntProxyStatus>({
   last_error: null,
 })
 
+const router = useRouter()
 const nodes = ref<AntProxyNode[]>([])
+const nodesByLine = ref<Partial<Record<'free' | 'paid', AntProxyNode[]>>>({})
+const antSmartProxies = ref<SmartProxy[]>([])
 const loading = ref(false)
 const refreshing = ref(false)
-const acting = ref(false)
-const testing = ref(false)
 const latencyLoading = ref(false)
 const loginLoading = ref(false)
 const uploadLoading = ref(false)
+const scheduleDialogVisible = ref(false)
+const scheduleLoading = ref(false)
+const scheduleSaving = ref(false)
 const reloginMode = ref(false)
 const sourceMode = ref<'account' | 'upload'>('account')
 const activeLine = ref<'free' | 'paid'>('free')
 const keyword = ref('')
-const listenHost = ref('127.0.0.1')
-const listenPort = ref(18080)
 const lastTest = ref('')
 const autoRefreshed = ref(false)
-let pollTimer = 0
+const scheduleConfig = ref<AntProxyScheduleConfig | null>(null)
+const antSmartProxyAddressGroups = computed(() =>
+  antSmartProxies.value.map((proxy) => {
+    const endpoints = endpointOptions(proxy)
+    return {
+      id: proxy.id,
+      name: proxy.name,
+      enabled: proxy.enabled,
+      endpoints,
+    }
+  })
+)
+let restoredFromSessionCache = false
 
 const loginForm = reactive({
   username: '',
   password: '',
   appVersion: '2.0.9',
 })
+const scheduleForm = reactive({
+  enabled: true,
+  intervalHours: 6,
+})
 
 const appVersionOptions = ['2.0.9']
+restoredFromSessionCache = restoreSessionCache()
 const showSourceEntry = computed(() => !status.loaded || reloginMode.value)
 const canRefreshRemote = computed(() => status.loaded && status.source_type === 'account')
+const scheduleStatusText = computed(() => {
+  if (!scheduleConfig.value) return scheduleLoading.value ? '读取中' : '-'
+  if (!scheduleConfig.value.enabled) return '已关闭'
+  if (status.source_type !== 'account') return '等待账号登录'
+  return `每 ${scheduleConfig.value.interval_minutes / 60} 小时`
+})
 
 const filteredNodes = computed(() => {
   const value = keyword.value.trim().toLowerCase()
@@ -423,23 +530,13 @@ const filteredNodes = computed(() => {
   )
 })
 
-const selectedTransport = computed(() => {
-  const node = status.selected_node
-  if (!node) return '-'
-  return `${node.transport || 'tcp'} / ${node.cipher}`
-})
-
-const selectedEndpoint = computed(() => {
-  const node = status.selected_node
-  if (!node) return '-'
-  return `${node.server}:${node.port}`
-})
-
-const lastState = computed(() => lastTest.value || status.last_error || (status.running ? '代理运行中' : '待启动'))
+const lastState = computed(() => lastTest.value || status.last_error || (status.running ? '内部适配器运行中' : '等待智能代理调用'))
+const activeLineText = computed(() => (activeLine.value === 'free' ? '免费专线' : '付费专线'))
 const lineSummary = computed(() => {
   const current = activeLine.value === 'free' ? status.free_node_count : status.paid_node_count
   return `${current} / ${status.node_count}`
 })
+const latencyTestText = computed(() => formatDateTime(status.last_latency_tested_at, '未测速'))
 const loginMethodText = computed(() => {
   if (!status.loaded) return '未加载'
   if (status.source_type === 'account') return '账号登录'
@@ -459,8 +556,6 @@ function beforeSourceModeLeave() {
 function applyStatus(next: AntProxyStatus) {
   Object.assign(status, next)
   status.user = next.user || emptyUser
-  listenHost.value = next.listen_host || listenHost.value
-  listenPort.value = next.listen_port || listenPort.value
   loginForm.appVersion = next.app_version || loginForm.appVersion
   if (reloginMode.value) return
   if (next.source_type === 'account') {
@@ -468,6 +563,56 @@ function applyStatus(next: AntProxyStatus) {
   } else if (next.source_type === 'upload' || next.source_type === 'local') {
     sourceMode.value = 'upload'
   }
+}
+
+function readSessionCache() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.sessionStorage.getItem(ANT_PROXY_CACHE_KEY)
+    if (!raw) return null
+    const data = JSON.parse(raw) as AntProxyCachePayload
+    if (data.version !== 1 || !data.status) return null
+    return data
+  } catch {
+    return null
+  }
+}
+
+function statusSnapshot() {
+  return JSON.parse(JSON.stringify(status)) as AntProxyStatus
+}
+
+function writeSessionCache() {
+  if (typeof window === 'undefined') return
+  try {
+    const payload: AntProxyCachePayload = {
+      version: 1,
+      status: statusSnapshot(),
+      activeLine: activeLine.value,
+      nodesByLine: nodesByLine.value,
+      antSmartProxies: antSmartProxies.value,
+      lastTest: lastTest.value,
+      autoRefreshed: autoRefreshed.value,
+      savedAt: Date.now(),
+    }
+    window.sessionStorage.setItem(ANT_PROXY_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // sessionStorage may be disabled; the page can still work with network data.
+  }
+}
+
+function restoreSessionCache() {
+  if (typeof window === 'undefined') return false
+  const cache = readSessionCache()
+  if (!cache) return false
+  activeLine.value = cache.activeLine === 'paid' ? 'paid' : 'free'
+  nodesByLine.value = cache.nodesByLine || {}
+  nodes.value = nodesByLine.value[activeLine.value] || []
+  antSmartProxies.value = cache.antSmartProxies || []
+  lastTest.value = cache.lastTest || ''
+  autoRefreshed.value = Boolean(cache.autoRefreshed)
+  applyStatus(cache.status)
+  return true
 }
 
 function beginRelogin() {
@@ -478,7 +623,7 @@ function beginRelogin() {
 
 async function cancelRelogin() {
   reloginMode.value = false
-  await maybeAutoRefreshAccountNodes()
+  writeSessionCache()
 }
 
 async function load() {
@@ -487,10 +632,13 @@ async function load() {
     const statusResponse = await http.get<AntProxyStatus>('/ant-proxy/status')
     applyStatus(statusResponse.data)
     if (statusResponse.data.loaded) {
-      await loadNodesOnly()
+      await Promise.all([loadNodesOnly({ preferCache: false }), loadAntSmartProxies()])
     } else {
       nodes.value = []
+      nodesByLine.value = {}
+      antSmartProxies.value = []
     }
+    writeSessionCache()
   } finally {
     loading.value = false
   }
@@ -505,17 +653,60 @@ async function refreshNodes(options: { silent?: boolean; refreshLatency?: boolea
   try {
     const response = await http.post<AntProxyStatus>('/ant-proxy/refresh', {})
     applyStatus(response.data)
-    const nodeResponse = await loadNodesOnly()
+    nodesByLine.value = {}
+    const nodeResponse = await loadNodesOnly({ preferCache: false })
+    await loadAntSmartProxies()
     if (!options.silent) {
       ElMessage.success(`节点已刷新：免费 ${response.data.free_node_count}，付费 ${response.data.paid_node_count}`)
     }
     if (options.refreshLatency !== false) {
       void measureLatencies({ silent: true }).catch(() => undefined)
     }
+    writeSessionCache()
     return nodeResponse
   } finally {
     refreshing.value = false
   }
+}
+
+function applyScheduleConfig(config: AntProxyScheduleConfig) {
+  scheduleConfig.value = config
+  scheduleForm.enabled = config.enabled
+  scheduleForm.intervalHours = Math.max(1, Math.round((config.interval_minutes || 360) / 60))
+}
+
+async function loadScheduleConfig() {
+  scheduleLoading.value = true
+  try {
+    const response = await http.get<AntProxyScheduleConfig>('/ant-proxy/schedule')
+    applyScheduleConfig(response.data)
+  } finally {
+    scheduleLoading.value = false
+  }
+}
+
+async function openScheduleDialog() {
+  scheduleDialogVisible.value = true
+  await loadScheduleConfig()
+}
+
+async function saveScheduleConfig() {
+  scheduleSaving.value = true
+  try {
+    const response = await http.put<AntProxyScheduleConfig>('/ant-proxy/schedule', {
+      enabled: scheduleForm.enabled,
+      interval_minutes: Math.max(1, Number(scheduleForm.intervalHours || 6)) * 60,
+    })
+    applyScheduleConfig(response.data)
+    ElMessage.success('后台定时刷新配置已保存')
+    scheduleDialogVisible.value = false
+  } finally {
+    scheduleSaving.value = false
+  }
+}
+
+function formatScheduleTime(value?: string | null) {
+  return formatDateTime(value, '-')
 }
 
 async function maybeAutoRefreshAccountNodes() {
@@ -541,7 +732,9 @@ async function loginAnt() {
       app_version: loginForm.appVersion || '2.0.9',
     })
     applyStatus(response.data)
-    let nodeResponse = await loadNodesOnly()
+    nodesByLine.value = {}
+    let nodeResponse = await loadNodesOnly({ preferCache: false })
+    await loadAntSmartProxies()
     reloginMode.value = false
     autoRefreshed.value = true
     try {
@@ -550,6 +743,7 @@ async function loginAnt() {
       ElMessage.warning('账号登录成功，节点刷新失败，可稍后点击刷新')
     }
     loginForm.password = ''
+    writeSessionCache()
     ElMessage.success(`账号登录成功，已同步 ${nodeResponse.data.total} 个节点`)
   } finally {
     loginLoading.value = false
@@ -564,10 +758,13 @@ async function uploadDb(options: UploadRequestOptions) {
     form.append('app_version', loginForm.appVersion || '2.0.9')
     const response = await http.post<AntProxyStatus>('/ant-proxy/upload', form)
     applyStatus(response.data)
-    const nodeResponse = await loadNodesOnly()
+    nodesByLine.value = {}
+    const nodeResponse = await loadNodesOnly({ preferCache: false })
+    await loadAntSmartProxies()
     reloginMode.value = false
     autoRefreshed.value = false
     options.onSuccess?.(response.data)
+    writeSessionCache()
     ElMessage.success(`已读取 ${nodeResponse.data.total} 个节点`)
   } catch (error) {
     throw error
@@ -576,65 +773,53 @@ async function uploadDb(options: UploadRequestOptions) {
   }
 }
 
-async function selectNode(nodeId: string) {
-  acting.value = true
-  try {
-    const response = await http.post<AntProxyStatus>('/ant-proxy/select', { node_id: nodeId })
-    applyStatus(response.data)
-    await loadNodesOnly()
-    ElMessage.success('已切换节点')
-  } finally {
-    acting.value = false
+async function loadNodesOnly(options: { preferCache?: boolean } = {}) {
+  const cachedNodes = nodesByLine.value[activeLine.value]
+  if (options.preferCache && cachedNodes) {
+    nodes.value = cachedNodes
+    return { data: { total: cachedNodes.length, items: cachedNodes } }
   }
-}
-
-async function startProxy(nodeId?: string) {
-  acting.value = true
-  try {
-    const response = await http.post<AntProxyStatus>('/ant-proxy/start', {
-      node_id: nodeId || status.selected_node?.id || null,
-      listen_host: listenHost.value || '127.0.0.1',
-      listen_port: listenPort.value || 18080,
-    })
-    applyStatus(response.data)
-    await loadNodesOnly()
-    ElMessage.success(`内置代理已启动：${response.data.endpoint}`)
-  } finally {
-    acting.value = false
-  }
-}
-
-async function stopProxy() {
-  acting.value = true
-  try {
-    const response = await http.post<AntProxyStatus>('/ant-proxy/stop')
-    applyStatus(response.data)
-    ElMessage.success('内置代理已停止')
-  } finally {
-    acting.value = false
-  }
-}
-
-async function testProxy() {
-  testing.value = true
-  try {
-    const response = await http.post<{ ok: boolean; status_code: number; first_line: string; elapsed_ms: number }>('/ant-proxy/test', {
-      url: 'http://www.gstatic.com/generate_204',
-      timeout: 15,
-    })
-    lastTest.value = `${response.data.first_line || response.data.status_code} · ${response.data.elapsed_ms}ms`
-    ElMessage.success(`测试通过：${lastTest.value}`)
-  } finally {
-    testing.value = false
-  }
-}
-
-async function loadNodesOnly() {
   const nodeResponse = await http.get<{ total: number; items: AntProxyNode[] }>('/ant-proxy/nodes', {
     params: { line_type: activeLine.value },
   })
   nodes.value = nodeResponse.data.items
+  nodesByLine.value = {
+    ...nodesByLine.value,
+    [activeLine.value]: nodeResponse.data.items,
+  }
+  writeSessionCache()
   return nodeResponse
+}
+
+async function loadAntSmartProxies() {
+  const response = await http.get<SmartProxy[]>('/smart-proxies')
+  antSmartProxies.value = response.data.filter((proxy) => proxy.data_source === 'ant')
+  writeSessionCache()
+}
+
+async function handleLineChange() {
+  await loadNodesOnly({ preferCache: true })
+}
+
+function endpointWithScheme(endpoint: string, scheme: 'http' | 'socks5') {
+  return endpoint.replace(/^[a-z][a-z0-9+.-]*:\/\//i, `${scheme}://`)
+}
+
+function endpointOptions(proxy: SmartProxy) {
+  if (proxy.proxy_type === 'mixed') {
+    return [
+      { label: 'HTTP(S)', scheme: 'http', url: endpointWithScheme(proxy.endpoint, 'http') },
+      { label: 'SOCKS5', scheme: 'socks5', url: endpointWithScheme(proxy.endpoint, 'socks5') },
+    ]
+  }
+  if (proxy.proxy_type === 'socks') {
+    return [{ label: 'SOCKS5', scheme: 'socks5', url: endpointWithScheme(proxy.endpoint, 'socks5') }]
+  }
+  return [{ label: 'HTTP(S)', scheme: 'http', url: endpointWithScheme(proxy.endpoint, 'http') }]
+}
+
+async function goSmartProxies() {
+  await router.push('/smart-proxies')
 }
 
 async function measureLatencies(options: { silent?: boolean } = {}) {
@@ -651,10 +836,15 @@ async function measureLatencies(options: { silent?: boolean } = {}) {
     )
     if (activeLine.value === lineType) {
       nodes.value = response.data.items
+      nodesByLine.value = {
+        ...nodesByLine.value,
+        [lineType]: response.data.items,
+      }
     }
     if (!options.silent) {
       ElMessage.success(`测速完成：在线 ${response.data.online} / ${response.data.total}`)
     }
+    writeSessionCache()
   } finally {
     latencyLoading.value = false
   }
@@ -698,15 +888,16 @@ function formatBytes(value: number) {
 }
 
 onMounted(async () => {
+  if (restoredFromSessionCache) {
+    writeSessionCache()
+    return
+  }
   await load()
   await maybeAutoRefreshAccountNodes()
-  pollTimer = window.setInterval(() => {
-    if (status.running) load()
-  }, 5000)
 })
 
 onBeforeUnmount(() => {
-  if (pollTimer) window.clearInterval(pollTimer)
+  writeSessionCache()
 })
 </script>
 
@@ -812,8 +1003,8 @@ onBeforeUnmount(() => {
 .ant-source-tabs--entry :deep(.el-tabs__item.is-active) {
   border-color: var(--el-color-primary);
   background: var(--el-color-primary);
-  color: #fff;
-  box-shadow: 0 8px 18px rgb(20 184 166 / 18%);
+  color: var(--accent-contrast);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent-deep) 18%, transparent);
 }
 
 .ant-source-tabs--entry :deep(.el-tabs__active-bar) {
@@ -913,27 +1104,251 @@ onBeforeUnmount(() => {
 }
 
 .ant-toolbar {
+  --ant-toolbar-control-height: 34px;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 0;
 }
 
+.ant-toolbar :deep(.el-input__wrapper),
+.ant-toolbar :deep(.el-select__wrapper) {
+  min-height: var(--ant-toolbar-control-height);
+  height: var(--ant-toolbar-control-height);
+}
+
+.ant-toolbar :deep(.el-button) {
+  min-height: var(--ant-toolbar-control-height);
+  height: var(--ant-toolbar-control-height);
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .ant-toolbar-fields {
+  display: flex;
   flex: 1 1 560px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.ant-toolbar-fields .toolbar-filter-search {
+  flex: 0 1 220px;
+  width: 220px;
 }
 
 .ant-host-input {
   width: 150px;
 }
 
+.ant-port-range {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .ant-summary {
   flex: 0 0 auto;
 }
 
-.ant-line-tabs {
+.ant-schedule-form {
+  display: grid;
+  gap: 12px;
+}
+
+.ant-schedule-form :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
+.ant-schedule-summary {
+  margin-top: 2px;
+}
+
+.ant-line-filter {
+  flex: 0 0 auto;
+  height: var(--ant-toolbar-control-height);
+  align-items: stretch;
+}
+
+.ant-line-filter :deep(.el-radio-button__inner) {
+  display: inline-flex;
+  height: var(--ant-toolbar-control-height);
+  min-height: var(--ant-toolbar-control-height);
+  align-items: center;
+  justify-content: center;
+  min-width: 126px;
+  border-color: color-mix(in srgb, var(--line) 84%, transparent);
+  background: color-mix(in srgb, var(--button-bg) 92%, var(--panel));
+  color: var(--text);
+  line-height: 1;
+}
+
+.ant-line-filter :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  border-color: var(--accent);
+  background: var(--accent-strong);
+  background-color: var(--accent-strong);
+  color: var(--accent-contrast);
+  box-shadow: -1px 0 0 0 var(--accent);
+}
+
+.ant-smart-proxies {
+  display: grid;
+  gap: 12px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  padding: 12px;
+}
+
+.ant-smart-proxies-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ant-smart-proxies-head strong {
+  color: var(--heading);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ant-smart-proxies-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ant-smart-proxy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 10px;
+}
+
+.ant-smart-proxy-item {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg, var(--radius));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, var(--accent) 6%), var(--panel)),
+    var(--panel);
+  padding: 12px;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.ant-smart-proxy-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
+  transform: translateY(-1px);
+}
+
+.ant-smart-proxy-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ant-smart-proxy-title strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--heading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ant-smart-proxy-title .el-tag {
   flex: 0 0 auto;
 }
 
-.ant-line-tabs :deep(.el-radio-button__inner) {
-  min-width: 128px;
+.ant-smart-proxy-endpoints {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ant-smart-proxy-endpoint {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) 30px;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--field-bg) 72%, var(--panel));
+  padding: 6px;
+}
+
+.ant-smart-proxy-scheme {
+  display: inline-flex;
+  min-width: 0;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-soft) 80%, var(--panel));
+  color: var(--heading);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ant-smart-proxy-url {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--field-bg) 76%, var(--panel));
+  color: var(--text);
+  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  line-height: 22px;
+  padding: 0 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ant-smart-proxy-copy {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  margin-left: 0 !important;
+  padding: 0;
+}
+
+.ant-runtime-config {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 150px 150px auto;
+  gap: 10px;
+  align-items: end;
+  flex: 0 0 auto;
+}
+
+.ant-health-url {
+  min-width: 0;
+}
+
+.ant-runtime-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.ant-runtime-field > span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .endpoint-inline {
@@ -986,7 +1401,7 @@ onBeforeUnmount(() => {
 }
 
 .online-cell {
-  color: #22d3ee;
+  color: var(--info);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1031,8 +1446,46 @@ onBeforeUnmount(() => {
     width: 100%;
   }
 
+  .ant-runtime-config {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .ant-current {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ant-smart-proxy-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ant-smart-proxy-endpoint {
+    grid-template-columns: minmax(0, 1fr) 34px;
+    gap: 6px 8px;
+    padding: 9px;
+  }
+
+  .ant-smart-proxy-scheme {
+    justify-self: start;
+    max-width: 100%;
+    padding: 0 10px;
+  }
+
+  .ant-smart-proxy-url {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    border-radius: var(--radius-sm);
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    padding: 7px 10px;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  .ant-smart-proxy-copy {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
   }
 
   .ant-host-input {

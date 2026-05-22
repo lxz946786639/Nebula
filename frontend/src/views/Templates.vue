@@ -4,7 +4,8 @@
       <span></span>
       <el-button type="primary" :icon="Plus" @click="openCreate">新增模板</el-button>
     </div>
-    <el-table class="list-table desktop-table" :data="items" stripe height="100%">
+    <div class="table-wrap has-cards desktop-table">
+      <el-table class="list-table" :data="items" stripe height="100%">
       <el-table-column prop="name" label="名称" min-width="180" />
       <el-table-column prop="target" label="目标" width="130" />
       <el-table-column prop="config_url" label="配置 URL" min-width="260" show-overflow-tooltip />
@@ -19,8 +20,9 @@
           <el-button :icon="Delete" circle title="删除模板" type="danger" @click="remove(row.id)" />
         </template>
       </el-table-column>
-    </el-table>
-    <div class="mobile-card-list">
+      </el-table>
+    </div>
+    <div class="mobile-card-list data-cards">
       <el-empty v-if="!items.length" description="暂无模板" :image-size="72" />
       <article v-for="row in items" v-else :key="row.id" class="mobile-card">
         <div class="mobile-card-head">

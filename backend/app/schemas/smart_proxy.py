@@ -12,12 +12,15 @@ class SmartProxyBase(BaseModel):
     strategy: str = "fallback"
     stability_priority: bool = False
     scenario: str = "general"
+    data_source: str = "subscription"
     source_mode: str = "all"
     subscription_ids: list[int] = Field(default_factory=list)
     country_codes: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     node_ids: list[int] = Field(default_factory=list)
     strategy_node_ids: list[int] = Field(default_factory=list)
+    ant_node_ids: list[str] = Field(default_factory=list)
+    ant_strategy_node_ids: list[str] = Field(default_factory=list)
     protocol_types: list[str] = Field(default_factory=list)
     health_check_url: str = "http://www.gstatic.com/generate_204"
     health_check_interval: int = 300
@@ -47,12 +50,15 @@ class SmartProxyUpdate(BaseModel):
     strategy: str | None = None
     stability_priority: bool | None = None
     scenario: str | None = None
+    data_source: str | None = None
     source_mode: str | None = None
     subscription_ids: list[int] | None = None
     country_codes: list[str] | None = None
     tags: list[str] | None = None
     node_ids: list[int] | None = None
     strategy_node_ids: list[int] | None = None
+    ant_node_ids: list[str] | None = None
+    ant_strategy_node_ids: list[str] | None = None
     protocol_types: list[str] | None = None
     health_check_url: str | None = None
     health_check_interval: int | None = None
@@ -135,6 +141,7 @@ class SmartProxyPreset(BaseModel):
     strategy: str = "fallback"
     stability_priority: bool = False
     scenario: str = "general"
+    data_source: str = "subscription"
     source_mode: str = "country"
     country_codes: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
@@ -158,11 +165,21 @@ class SmartProxySubscriptionOption(BaseModel):
     nodes: int = 0
 
 
+class SmartProxyTagOption(BaseModel):
+    value: str
+    label: str
+    nodes: int = 0
+
+
 class SmartProxyMetadata(BaseModel):
     countries: list[SmartProxyCountryOption] = Field(default_factory=list)
     subscriptions: list[SmartProxySubscriptionOption] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     protocol_types: list[str] = Field(default_factory=list)
+    ant_loaded: bool = False
+    ant_countries: list[SmartProxyCountryOption] = Field(default_factory=list)
+    ant_tags: list[SmartProxyTagOption] = Field(default_factory=list)
+    ant_protocol_types: list[str] = Field(default_factory=list)
     presets: list[SmartProxyPreset] = Field(default_factory=list)
 
 

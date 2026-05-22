@@ -68,6 +68,16 @@ async def bootstrap_defaults(session: AsyncSession) -> None:
         "cache_ttl_seconds": (str(settings.CACHE_TTL_SECONDS), False, "Final config cache TTL"),
         "node_filter_patterns": ("", False, "Comma-separated wildcard patterns used to skip pseudo nodes by name"),
         "traffic_poll_interval_minutes": ("30", False, "Subscription traffic polling interval in minutes; 0 disables it"),
+        "ant_proxy_auto_refresh_enabled": (
+            "true" if settings.ANT_PROXY_AUTO_REFRESH_ENABLED else "false",
+            False,
+            "Whether Ant account nodes should refresh in the background",
+        ),
+        "ant_proxy_auto_refresh_interval_minutes": (
+            str(settings.ANT_PROXY_AUTO_REFRESH_INTERVAL_MINUTES),
+            False,
+            "Ant account node background refresh interval in minutes",
+        ),
         "smart_proxy_auto_apply_interval_minutes": (
             str(settings.SMART_PROXY_AUTO_APPLY_INTERVAL_MINUTES),
             False,

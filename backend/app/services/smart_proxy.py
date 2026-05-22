@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import random
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -15,13 +17,14 @@ import aiohttp
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import BACKEND_DIR
+from app.core.config import BACKEND_DIR, get_settings
 from app.core.locks import exclusive_lock
 from app.core.timezone import as_china, now_china
 from app.models.node import Node
 from app.models.smart_proxy import SmartProxy
 from app.models.smart_proxy_health import SmartProxyHealthLog
 from app.models.smart_proxy_switch import SmartProxySwitchLog
+from app.models.system_setting import SystemSetting
 from app.models.traffic_snapshot import TrafficSnapshot
 from app.services.audit import write_audit
 from app.services.node_latency import test_selected_node_latencies
@@ -45,6 +48,7 @@ from app.services.traffic import latest_traffic_snapshot
 
 PROXY_TYPES = {"http", "socks", "mixed"}
 STRATEGIES = {"select", "stable", "fallback", "url-test", "load-balance", "relay", "round-robin"}
+DATA_SOURCES = {"subscription", "ant"}
 TEST_URL = "http://www.gstatic.com/generate_204"
 SCENARIO_CHECKS = {
     "ai": ("chatgpt", "https://chat.openai.com/cdn-cgi/trace"),
@@ -52,6 +56,7 @@ SCENARIO_CHECKS = {
 }
 RUNTIME_NODE_ID_RE = re.compile(r"^node-(\d+)\b")
 TRAFFIC_RUNTIME_RELOAD_COOLDOWN = timedelta(minutes=5)
+CORE_TRAFFIC_STATE_KEY = "mihomo_core_traffic_state"
 _core_traffic_sample: tuple[datetime, int, int] | None = None
 _proxy_traffic_samples: dict[int, tuple[datetime, int, int]] = {}
 _last_traffic_runtime_reload_at: datetime | None = None
@@ -154,6 +159,15 @@ def normalize_strategy(value: str) -> str:
     return strategy
 
 
+def normalize_data_source(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"", "node", "nodes", "subscription", "subscriptions"}:
+        return "subscription"
+    if normalized in {"ant", "ant_proxy", "ant-proxy", "蚂蚁", "蚂蚁代理"}:
+        return "ant"
+    raise SmartProxyError("Unsupported smart proxy data source")
+
+
 def endpoint_for(proxy: SmartProxy) -> str:
     scheme = "socks5" if proxy.proxy_type == "socks" else "http"
     auth = ""
@@ -227,6 +241,93 @@ def _safe_int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _parse_core_traffic_state(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def _core_traffic_setting(session: AsyncSession) -> SystemSetting | None:
+    return await session.scalar(select(SystemSetting).where(SystemSetting.key == CORE_TRAFFIC_STATE_KEY))
+
+
+async def _read_persisted_core_traffic(session: AsyncSession) -> tuple[int, int]:
+    item = await _core_traffic_setting(session)
+    state = _parse_core_traffic_state(item.value if item is not None else None)
+    return _safe_int(state.get("upload_total")), _safe_int(state.get("download_total"))
+
+
+async def _persist_core_traffic_sample(
+    session: AsyncSession,
+    *,
+    api_url: str,
+    raw_upload_total: int,
+    raw_download_total: int,
+    observed_at: datetime,
+) -> tuple[int, int]:
+    async with exclusive_lock("mihomo_core_traffic_state"):
+        raw_upload_total = max(raw_upload_total, 0)
+        raw_download_total = max(raw_download_total, 0)
+        item = await _core_traffic_setting(session)
+        state = _parse_core_traffic_state(item.value if item is not None else None)
+        previous_api_url = str(state.get("api_url") or "")
+        previous_raw_upload = _safe_int(state.get("raw_upload_total"))
+        previous_raw_download = _safe_int(state.get("raw_download_total"))
+        upload_total = _safe_int(state.get("upload_total"))
+        download_total = _safe_int(state.get("download_total"))
+
+        if not state:
+            upload_total = max(raw_upload_total, 0)
+            download_total = max(raw_download_total, 0)
+        elif previous_api_url and previous_api_url != api_url:
+            # A different Mihomo API may already have non-zero counters; use the
+            # first read as its baseline so switching endpoints does not invent traffic.
+            pass
+        else:
+            upload_delta = raw_upload_total - previous_raw_upload
+            download_delta = raw_download_total - previous_raw_download
+            upload_total += raw_upload_total if upload_delta < 0 else max(upload_delta, 0)
+            download_total += raw_download_total if download_delta < 0 else max(download_delta, 0)
+
+        if (
+            item is not None
+            and previous_api_url == api_url
+            and previous_raw_upload == raw_upload_total
+            and previous_raw_download == raw_download_total
+            and _safe_int(state.get("upload_total")) == upload_total
+            and _safe_int(state.get("download_total")) == download_total
+        ):
+            return upload_total, download_total
+
+        payload = {
+            "api_url": api_url,
+            "upload_total": upload_total,
+            "download_total": download_total,
+            "raw_upload_total": raw_upload_total,
+            "raw_download_total": raw_download_total,
+            "updated_at": observed_at.isoformat(),
+        }
+        value = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        if item is None:
+            session.add(
+                SystemSetting(
+                    key=CORE_TRAFFIC_STATE_KEY,
+                    value=value,
+                    secret=False,
+                    description="Persisted Mihomo traffic totals",
+                )
+            )
+        elif item.value != value:
+            item.value = value
+            item.description = "Persisted Mihomo traffic totals"
+        await session.commit()
+        return upload_total, download_total
 
 
 def _speed_from_sample(
@@ -306,6 +407,10 @@ def resolve_runtime_config_path(path_value: str) -> Path:
 
 def _normalize_list(values: list[Any] | None) -> list[Any]:
     return values if isinstance(values, list) else []
+
+
+def smart_proxy_is_ant(proxy: SmartProxy) -> bool:
+    return normalize_data_source(str(getattr(proxy, "data_source", "") or "subscription")) == "ant"
 
 
 def _tag_match(node: Node, wanted_tags: list[str]) -> bool:
@@ -529,10 +634,37 @@ async def traffic_schedule_for_nodes(
 async def allocate_smart_proxy_port(session: AsyncSession) -> int:
     start, end = await get_smart_proxy_port_range(session)
     used_ports = set((await session.scalars(select(SmartProxy.port))).all())
-    for port in range(start, end + 1):
-        if port not in used_ports:
-            return port
+    candidates = [port for port in range(start, end + 1) if port not in used_ports]
+    random.shuffle(candidates)
+    if candidates:
+        return candidates[0]
     raise SmartProxyError("No available smart proxy ports")
+
+
+async def allocate_runtime_proxy_port(session: AsyncSession, *, allow_port: int | None = None) -> int:
+    start, end = await get_smart_proxy_port_range(session)
+    used_ports = {int(port) for port in (await session.scalars(select(SmartProxy.port))).all()}
+    if allow_port is not None and start <= allow_port <= end and allow_port not in used_ports:
+        return allow_port
+    candidates = [port for port in range(start, end + 1) if port not in used_ports]
+    random.shuffle(candidates)
+    if candidates:
+        return candidates[0]
+    raise SmartProxyError(f"代理端口池 {start}-{end} 没有可用端口")
+
+
+async def ensure_runtime_proxy_port_available(session: AsyncSession, port: int, *, allow_port: int | None = None) -> None:
+    start, end = await get_smart_proxy_port_range(session)
+    if port < start or port > end:
+        raise SmartProxyError(f"端口 {port} 不在部署映射范围 {start}-{end} 内")
+
+    stmt = select(SmartProxy).where(SmartProxy.port == port)
+    existing = await session.scalar(stmt)
+    if existing is not None:
+        raise SmartProxyError(f"端口 {port} 已被智能代理「{existing.name}」占用")
+
+    if allow_port is not None and port == allow_port:
+        return
 
 
 async def ensure_unique_port(session: AsyncSession, port: int, *, exclude_id: int | None = None) -> None:
@@ -601,7 +733,93 @@ async def candidate_nodes_for_proxy(session: AsyncSession, proxy: SmartProxy) ->
     return _prioritize_stable_current_node(scheduled, proxy)
 
 
+def _ant_node_sort_key(node: Any) -> tuple[int, int, str, str, str]:
+    latency = getattr(node, "latency_ms", None)
+    return (
+        1 if latency is None else 0,
+        int(latency or 0),
+        str(getattr(node, "line_type", "") or ""),
+        str(getattr(node, "country_code", "") or ""),
+        str(getattr(node, "name", "") or ""),
+    )
+
+
+def _ant_node_tag_match(node: Any, wanted_tags: list[str]) -> bool:
+    if not wanted_tags:
+        return True
+    values = {
+        str(getattr(node, "line_type", "") or "").lower(),
+        str(getattr(node, "line_label", "") or "").lower(),
+        str(getattr(node, "source", "") or "").lower(),
+        str(getattr(node, "group", "") or "").lower(),
+        f"line:{str(getattr(node, 'line_type', '') or '').lower()}",
+        f"source:{str(getattr(node, 'source', '') or '').lower()}",
+        f"group:{str(getattr(node, 'group', '') or '').lower()}",
+    }
+    return all(tag.lower() in values for tag in wanted_tags)
+
+
+def _normalize_ant_node_ids(values: list[Any] | None) -> list[str]:
+    return [str(item).strip() for item in _normalize_list(values) if str(item).strip()]
+
+
+async def source_ant_nodes_for_proxy(proxy: SmartProxy, *, latency_order: bool = True) -> list[Any]:
+    from app.services.ant_proxy import ant_proxy_service
+
+    if not ant_proxy_service.nodes:
+        return []
+
+    nodes = list(ant_proxy_service.nodes)
+    source_mode = str(proxy.source_mode or "all")
+    country_codes = {str(item).upper() for item in _normalize_list(proxy.country_codes) if str(item).strip()}
+    protocol_types = {str(item).lower() for item in _normalize_list(proxy.protocol_types) if str(item).strip()}
+    tags = [str(item).strip() for item in _normalize_list(proxy.tags) if str(item).strip()]
+    source_node_ids = _normalize_ant_node_ids(proxy.ant_node_ids)
+
+    if source_mode == "manual":
+        if not source_node_ids:
+            return []
+        by_id = {node.id: node for node in nodes}
+        nodes = [by_id[node_id] for node_id in source_node_ids if node_id in by_id]
+
+    if country_codes:
+        nodes = [node for node in nodes if str(node.country_code or "").upper() in country_codes]
+    if tags:
+        nodes = [node for node in nodes if _ant_node_tag_match(node, tags)]
+    if protocol_types:
+        nodes = [node for node in nodes if str(node.transport or "").lower() in protocol_types]
+    if latency_order:
+        nodes.sort(key=_ant_node_sort_key)
+    return nodes
+
+
+def _apply_strategy_ant_node_selection(nodes: list[Any], proxy: SmartProxy) -> list[Any]:
+    strategy_node_ids = _normalize_ant_node_ids(proxy.ant_strategy_node_ids)
+    if not strategy_node_ids:
+        return nodes
+    by_id = {node.id: node for node in nodes}
+    return [by_id[node_id] for node_id in strategy_node_ids if node_id in by_id]
+
+
+async def candidate_ant_nodes_for_proxy(proxy: SmartProxy) -> list[Any]:
+    source_nodes = await source_ant_nodes_for_proxy(proxy, latency_order=True)
+    return _apply_strategy_ant_node_selection(source_nodes, proxy)
+
+
 async def traffic_schedule_for_proxy(session: AsyncSession, proxy: SmartProxy) -> TrafficSchedule:
+    if smart_proxy_is_ant(proxy):
+        nodes = await source_ant_nodes_for_proxy(proxy, latency_order=False)
+        selected_nodes = _apply_strategy_ant_node_selection(nodes, proxy)
+        return TrafficSchedule(
+            enabled=False,
+            total_nodes=len(nodes),
+            usable_nodes=len(selected_nodes),
+            excluded_nodes=0,
+            risk_nodes=0,
+            unknown_nodes=0,
+            snapshot_at=None,
+            reasons=[],
+        )
     source_nodes = await source_nodes_for_proxy(session, proxy, latency_order=False)
     selected_nodes = _apply_strategy_node_selection(source_nodes, proxy)
     _, schedule = await traffic_schedule_for_nodes(session, selected_nodes, proxy=proxy)
@@ -860,6 +1078,8 @@ async def reconcile_smart_proxy_runtime_after_traffic_change(
 
 
 async def smart_proxy_candidate_count(session: AsyncSession, proxy: SmartProxy) -> int:
+    if smart_proxy_is_ant(proxy):
+        return len(await candidate_ant_nodes_for_proxy(proxy))
     return len(await candidate_nodes_for_proxy(session, proxy))
 
 
@@ -929,12 +1149,29 @@ def _listener_config(proxy: SmartProxy, listen_host: str | None = None) -> dict[
     return listener
 
 
-async def runtime_listener_bind_host(session: AsyncSession, proxy: SmartProxy) -> str:
+async def runtime_bind_host(session: AsyncSession, configured_host: str | None) -> str:
     core_path = await get_mihomo_core_config_path(session)
-    configured_host = (proxy.listen_host or "").strip()
-    if core_path.startswith("/root/.config/mihomo/") and configured_host not in {"", "0.0.0.0", "::"}:
+    host = (configured_host or "").strip()
+    if core_path.startswith("/root/.config/mihomo/") and host not in {"", "0.0.0.0", "::"}:
         return "0.0.0.0"
-    return configured_host or "0.0.0.0"
+    return host or "0.0.0.0"
+
+
+async def runtime_listener_bind_host(session: AsyncSession, proxy: SmartProxy) -> str:
+    return await runtime_bind_host(session, proxy.listen_host)
+
+
+async def ant_adapter_hosts(session: AsyncSession) -> tuple[str, str]:
+    settings = get_settings()
+    bind_override = settings.ANT_ADAPTER_BIND_HOST.strip()
+    connect_override = settings.ANT_ADAPTER_CONNECT_HOST.strip()
+    core_path = await get_mihomo_core_config_path(session)
+    if core_path.startswith("/root/.config/mihomo/"):
+        api_host = (urlsplit(await get_mihomo_api_url(session)).hostname or "").lower()
+        if api_host in {"127.0.0.1", "localhost", "::1"}:
+            return bind_override or "0.0.0.0,::", connect_override or "host.docker.internal"
+        return bind_override or "0.0.0.0", connect_override or "backend"
+    return bind_override or "127.0.0.1", connect_override or "127.0.0.1"
 
 
 async def build_mihomo_runtime_config(session: AsyncSession) -> tuple[dict[str, Any], RuntimeApplyResult]:
@@ -944,9 +1181,64 @@ async def build_mihomo_runtime_config(session: AsyncSession) -> tuple[dict[str, 
     config = _base_runtime_config()
     node_name_by_id: dict[int, str] = {}
     node_raw_by_id: dict[int, dict[str, Any]] = {}
+    ant_raw_by_name: dict[str, dict[str, Any]] = {}
     applied_proxy_ids: list[int] = []
+    ant_adapters_ready = False
+
+    async def ensure_ant_adapters() -> tuple[bool, str | None]:
+        nonlocal ant_adapters_ready
+        if ant_adapters_ready:
+            return True, None
+        from app.services.ant_proxy import DEFAULT_ANT_LISTEN_PORT, ant_proxy_service
+
+        if not ant_proxy_service.nodes:
+            return False, "请先在蚂蚁代理页登录 Ant 账号或上传 ant.db"
+        adapter_bind_host, adapter_connect_host = await ant_adapter_hosts(session)
+        try:
+            await ant_proxy_service.start(
+                listen_host="127.0.0.1",
+                listen_port=DEFAULT_ANT_LISTEN_PORT,
+                adapter_bind_host=adapter_bind_host,
+                adapter_connect_host=adapter_connect_host,
+            )
+        except Exception as exc:
+            return False, f"Ant 内部适配器启动失败：{exc}"
+        ant_adapters_ready = True
+        return True, None
 
     for smart_proxy in smart_proxies:
+        if smart_proxy_is_ant(smart_proxy):
+            from app.services.ant_proxy import ant_proxy_service
+
+            nodes = await candidate_ant_nodes_for_proxy(smart_proxy)
+            if not nodes:
+                smart_proxy.status = "degraded"
+                smart_proxy.last_error = "No Ant nodes matched this smart proxy"
+                continue
+            ready, error = await ensure_ant_adapters()
+            if not ready:
+                smart_proxy.status = "degraded"
+                smart_proxy.last_error = error or "Ant adapters are not ready"
+                continue
+            proxy_names: list[str] = []
+            for node in nodes:
+                raw = ant_proxy_service.mihomo_proxy_config_for_node(node)
+                if not raw:
+                    continue
+                name = str(raw["name"])
+                ant_raw_by_name[name] = raw
+                proxy_names.append(name)
+            if not proxy_names:
+                smart_proxy.status = "degraded"
+                smart_proxy.last_error = "No Ant adapters matched this smart proxy"
+                continue
+            config["proxy-groups"].append(_group_config(smart_proxy, proxy_names))
+            config["listeners"].append(_listener_config(smart_proxy, await runtime_listener_bind_host(session, smart_proxy)))
+            smart_proxy.status = "configured"
+            smart_proxy.last_error = None
+            applied_proxy_ids.append(smart_proxy.id)
+            continue
+
         nodes = await candidate_nodes_for_proxy(session, smart_proxy)
         if not nodes:
             smart_proxy.status = "degraded"
@@ -972,7 +1264,10 @@ async def build_mihomo_runtime_config(session: AsyncSession) -> tuple[dict[str, 
         smart_proxy.last_error = None
         applied_proxy_ids.append(smart_proxy.id)
 
-    config["proxies"] = list(node_raw_by_id.values())
+    config["proxies"] = [
+        *list(node_raw_by_id.values()),
+        *list(ant_raw_by_name.values()),
+    ]
     path = resolve_runtime_config_path(await get_mihomo_runtime_config_path(session))
     return config, RuntimeApplyResult(
         config_path=str(path),
@@ -1133,14 +1428,31 @@ async def mihomo_core_status(session: AsyncSession) -> dict[str, Any]:
     api_url = await get_mihomo_api_url(session)
     try:
         version_data = await mihomo_get_json(session, "/version")
+        connections_available = True
         try:
             connections_data = await mihomo_connections(session)
         except MihomoApiError:
+            connections_available = False
             connections_data = {}
         connections = connections_data.get("connections") if isinstance(connections_data, dict) else []
         now = now_china()
-        upload_total = _safe_int(connections_data.get("uploadTotal")) if isinstance(connections_data, dict) else 0
-        download_total = _safe_int(connections_data.get("downloadTotal")) if isinstance(connections_data, dict) else 0
+        connections_available = (
+            connections_available
+            and isinstance(connections_data, dict)
+            and ("uploadTotal" in connections_data or "downloadTotal" in connections_data)
+        )
+        raw_upload_total = _safe_int(connections_data.get("uploadTotal")) if isinstance(connections_data, dict) else 0
+        raw_download_total = _safe_int(connections_data.get("downloadTotal")) if isinstance(connections_data, dict) else 0
+        if connections_available:
+            upload_total, download_total = await _persist_core_traffic_sample(
+                session,
+                api_url=api_url,
+                raw_upload_total=raw_upload_total,
+                raw_download_total=raw_download_total,
+                observed_at=now,
+            )
+        else:
+            upload_total, download_total = await _read_persisted_core_traffic(session)
         upload_speed, download_speed = _speed_from_sample(
             _core_traffic_sample,
             (now, upload_total, download_total),
@@ -1159,13 +1471,14 @@ async def mihomo_core_status(session: AsyncSession) -> dict[str, Any]:
             "error": None,
         }
     except MihomoApiError as exc:
+        upload_total, download_total = await _read_persisted_core_traffic(session)
         return {
             "api_url": api_url,
             "available": False,
             "version": None,
             "active_connections": 0,
-            "download_total": 0,
-            "upload_total": 0,
+            "download_total": download_total,
+            "upload_total": upload_total,
             "download_speed": 0,
             "upload_speed": 0,
             "memory": None,
@@ -1246,9 +1559,9 @@ def _delay_summary(runtime_nodes: list[str], proxies: dict[str, Any]) -> dict[st
     online_nodes = 0
     for name in runtime_nodes:
         item = proxies.get(name)
-        if isinstance(item, dict) and item.get("alive") is True:
-            online_nodes += 1
         delay = _latest_history_delay(item if isinstance(item, dict) else None)
+        if isinstance(item, dict) and (item.get("alive") is True or (item.get("alive") is None and delay is not None)):
+            online_nodes += 1
         if delay is not None:
             delays.append((name, delay))
     best = min(delays, key=lambda item: item[1]) if delays else None
@@ -1259,6 +1572,14 @@ def _delay_summary(runtime_nodes: list[str], proxies: dict[str, Any]) -> dict[st
         "best_node": best[0] if best else None,
         "delay": best[1] if best else None,
     }
+
+
+def _runtime_node_status(runtime_nodes: list[str], online_nodes: int) -> tuple[str, str | None]:
+    if not runtime_nodes:
+        return "degraded", "No runtime nodes in Mihomo group"
+    if online_nodes <= 0:
+        return "proxy_unavailable", "All proxy nodes are unavailable"
+    return "running", None
 
 
 def _empty_connection_stats(proxy_id: int) -> dict[str, Any]:
@@ -1517,8 +1838,33 @@ async def smart_proxy_runtime_status(session: AsyncSession, proxy: SmartProxy, *
                 **traffic_payload,
             }
         all_nodes = group.get("all") if isinstance(group.get("all"), list) else []
-        delay = await mihomo_group_delay(session, group_name, url=proxy.health_check_url) if run_delay else None
-        summary = _delay_summary([str(item) for item in all_nodes], proxies)
+        delay = None
+        if run_delay:
+            try:
+                delay = await mihomo_group_delay(session, group_name, url=proxy.health_check_url)
+            except MihomoApiError:
+                delay = None
+        if run_delay:
+            try:
+                refreshed_proxies = await mihomo_proxy_map(session)
+                refreshed_group = refreshed_proxies.get(group_name)
+                if isinstance(refreshed_group, dict):
+                    proxies = refreshed_proxies
+                    group = refreshed_group
+                    all_nodes = group.get("all") if isinstance(group.get("all"), list) else []
+            except MihomoApiError:
+                pass
+        runtime_nodes = [str(item) for item in all_nodes if str(item).strip()]
+        summary = _delay_summary(runtime_nodes, proxies)
+        if delay is not None and summary["online_nodes"] == 0:
+            current_node = str(group.get("now") or "")
+            if current_node in runtime_nodes:
+                summary["online_nodes"] = 1
+                summary["failed_nodes"] = max(len(runtime_nodes) - 1, 0)
+                summary["average_delay"] = delay
+                summary["best_node"] = current_node
+                summary["delay"] = delay
+        runtime_status, runtime_error = _runtime_node_status(runtime_nodes, summary["online_nodes"])
         return {
             "proxy_id": proxy.id,
             "name": proxy.name,
@@ -1526,17 +1872,17 @@ async def smart_proxy_runtime_status(session: AsyncSession, proxy: SmartProxy, *
             "group_name": group_name,
             "enabled": True,
             "core_available": True,
-            "status": "running",
+            "status": runtime_status,
             "current_node": group.get("now"),
             "candidate_nodes": candidate_count,
-            "runtime_nodes": len(all_nodes),
+            "runtime_nodes": len(runtime_nodes),
             "online_nodes": summary["online_nodes"],
             "failed_nodes": summary["failed_nodes"],
             "average_delay": summary["average_delay"],
             "best_node": summary["best_node"],
             "delay": delay or summary["delay"],
             "history": group.get("history") if isinstance(group.get("history"), list) else [],
-            "error": None,
+            "error": runtime_error,
             **stats_payload,
             **traffic_payload,
         }
@@ -1622,6 +1968,9 @@ async def check_smart_proxy_health(
         url=proxy.health_check_url or TEST_URL,
         timeout_ms=timeout_ms,
     )
+    aggregate_delay = delays.get(group_name)
+    if aggregate_delay is not None and isinstance(result["current_node"], str):
+        delays.setdefault(result["current_node"], aggregate_delay)
 
     node_ids = [node_id for node_id in (runtime_node_id(name) for name in runtime_nodes) if node_id is not None]
     nodes_by_id = {
@@ -1671,9 +2020,11 @@ async def check_smart_proxy_health(
     failed_count = max(len(runtime_nodes) - online_count, 0)
     best = min(online_delays, key=lambda item: item[1]) if online_delays else None
     average = round(sum(delay for _, delay in online_delays) / online_count) if online_count else None
+    health_status, default_health_error = _runtime_node_status(runtime_nodes, online_count)
+    health_error = None if online_count else delay_error or default_health_error
     result.update(
         {
-            "status": "running" if online_count else "degraded",
+            "status": health_status,
             "online_nodes": online_count,
             "failed_nodes": failed_count,
             "average_delay": average,
@@ -1684,10 +2035,10 @@ async def check_smart_proxy_health(
                     "check_type": "delay",
                     "status": "ok" if online_count else "failed",
                     "delay": best[1] if best else None,
-                    "message": None if online_count else delay_error or "All candidate nodes timed out",
+                    "message": None if online_count else health_error or "All candidate nodes timed out",
                 }
             ],
-            "error": None if online_count else delay_error or "All candidate nodes timed out",
+            "error": None if online_count else health_error or "All candidate nodes timed out",
         }
     )
 

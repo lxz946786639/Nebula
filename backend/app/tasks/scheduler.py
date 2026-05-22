@@ -10,10 +10,13 @@ from app.models.subscription import Subscription
 from app.services.aggregator import refresh_subscription_source
 from app.services.audit import write_audit
 from app.services.settings import (
+    get_ant_proxy_auto_refresh_enabled,
+    get_ant_proxy_auto_refresh_interval_minutes,
     get_smart_proxy_auto_apply_interval_minutes,
     get_smart_proxy_monitor_interval_minutes,
     get_traffic_poll_interval_minutes,
 )
+from app.services.ant_proxy import AntProxyError, ant_proxy_service
 from app.services.smart_proxy import (
     apply_mihomo_runtime_if_changed,
     reconcile_smart_proxy_runtime_after_traffic_change,
@@ -24,6 +27,7 @@ from app.services.traffic import latest_traffic_snapshot, poll_traffic_snapshot
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=CHINA_TZ)
+last_ant_proxy_refresh_attempt_at: datetime | None = None
 last_smart_proxy_apply_at: datetime | None = None
 last_smart_proxy_monitor_at: datetime | None = None
 
@@ -102,6 +106,60 @@ async def poll_traffic_by_setting() -> None:
             logger.info("Scheduled traffic poll skipped: %s", exc)
 
 
+async def refresh_ant_proxy_by_setting() -> None:
+    global last_ant_proxy_refresh_attempt_at
+    async with AsyncSessionLocal() as session:
+        enabled = await get_ant_proxy_auto_refresh_enabled(session)
+        interval_minutes = await get_ant_proxy_auto_refresh_interval_minutes(session)
+        if not enabled or interval_minutes <= 0:
+            return
+        if ant_proxy_service.source_type != "account" or not ant_proxy_service.nodes:
+            return
+
+        now = now_china()
+        markers = [
+            _as_china(item)
+            for item in (ant_proxy_service.last_loaded_at, last_ant_proxy_refresh_attempt_at)
+            if item is not None
+        ]
+        latest_marker = max(markers) if markers else None
+        if latest_marker and now - latest_marker < timedelta(minutes=interval_minutes):
+            return
+        last_ant_proxy_refresh_attempt_at = now
+
+        try:
+            refreshed = await ant_proxy_service.refresh_account_nodes()
+            await ant_proxy_service.save_state(session)
+            runtime_result, content_changed = await apply_mihomo_runtime_if_changed(session, reload_core=True)
+            detail = (
+                "定时刷新蚂蚁代理节点完成："
+                f"免费 {refreshed.get('free', 0)} 个，付费 {refreshed.get('paid', 0)} 个"
+            )
+            if content_changed or runtime_result.error:
+                detail += (
+                    "；智能代理运行时"
+                    + ("已更新" if content_changed else "无变化")
+                    + (f"，核心重载{'成功' if runtime_result.reloaded else '未完成'}" if content_changed else "")
+                    + (f"，错误：{runtime_result.error}" if runtime_result.error else "")
+                )
+            await write_audit(session, actor="system", action="refresh", resource="ant_proxy", detail=detail + "。")
+            await session.commit()
+        except AntProxyError as exc:
+            ant_proxy_service.last_error = str(exc)
+            await write_audit(
+                session,
+                actor="system",
+                action="refresh_failed",
+                resource="ant_proxy",
+                detail=f"定时刷新蚂蚁代理节点失败：{exc}",
+            )
+            await session.commit()
+            logger.info("Scheduled Ant proxy refresh skipped: %s", exc)
+        except Exception as exc:
+            ant_proxy_service.last_error = f"定时刷新蚂蚁代理节点失败：{exc}"
+            logger.info("Scheduled Ant proxy refresh skipped: %s", exc)
+
+
 async def apply_smart_proxy_by_setting() -> None:
     global last_smart_proxy_apply_at
     async with AsyncSessionLocal() as session:
@@ -171,6 +229,7 @@ async def maintenance_tick() -> None:
     steps = (
         refresh_enabled_subscriptions,
         poll_traffic_by_setting,
+        refresh_ant_proxy_by_setting,
         apply_smart_proxy_by_setting,
         monitor_smart_proxy_by_setting,
     )

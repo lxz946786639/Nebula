@@ -18,7 +18,8 @@
         <el-button type="primary" :icon="Refresh" :loading="syncing" @click="refreshPool">同步节点池</el-button>
       </div>
     </div>
-    <el-table class="list-table desktop-table" :data="nodes" stripe height="100%" empty-text="暂无节点，点击同步节点池">
+    <div class="table-wrap has-cards desktop-table">
+      <el-table class="list-table" :data="nodes" stripe height="100%" empty-text="暂无节点，点击同步节点池">
       <el-table-column label="启用" width="86">
         <template #default="{ row }">
           <el-switch v-model="row.enabled" @change="() => updateEnabled(row)" />
@@ -64,8 +65,9 @@
           <el-button :icon="DocumentCopy" circle title="查看节点 YAML" @click="showRaw(row)" />
         </template>
       </el-table-column>
-    </el-table>
-    <div class="mobile-card-list">
+      </el-table>
+    </div>
+    <div class="mobile-card-list data-cards">
       <el-empty v-if="!nodes.length" description="暂无节点，点击同步节点池" :image-size="72" />
       <article v-for="row in nodes" v-else :key="row.id" class="mobile-card">
         <div class="mobile-card-head">

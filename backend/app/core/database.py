@@ -53,6 +53,9 @@ async def init_db() -> None:
                 "config_updated_at": "DATETIME",
                 "strategy_node_ids": "JSON DEFAULT '[]' NOT NULL",
                 "stability_priority": "BOOLEAN DEFAULT 0 NOT NULL",
+                "data_source": "VARCHAR(32) DEFAULT 'subscription' NOT NULL",
+                "ant_node_ids": "JSON DEFAULT '[]' NOT NULL",
+                "ant_strategy_node_ids": "JSON DEFAULT '[]' NOT NULL",
             }
             for name, ddl_type in columns.items():
                 if name not in existing:

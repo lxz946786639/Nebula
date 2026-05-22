@@ -1,12 +1,14 @@
 <template>
-  <div class="app-shell">
-    <aside class="sidebar">
+  <div class="app-shell" :class="{ 'is-drawer-open': mobileNavOpen }">
+    <div class="drawer-scrim" :class="{ 'is-visible': mobileNavOpen }" aria-hidden="true" @click="closeMobileNav"></div>
+    <aside class="sidebar" :class="{ 'is-mobile-open': mobileNavOpen }">
       <div class="brand">
         <div class="brand-mark">N</div>
         <div>
           <strong>Nebula</strong>
           <span>Sub Hub</span>
         </div>
+        <el-button class="drawer-close" :icon="Close" circle title="关闭导航" aria-label="关闭导航" @click="closeMobileNav" />
       </div>
       <div class="nav-shell" :class="{ 'has-left': canScrollNavLeft, 'has-right': canScrollNavRight }">
         <button
@@ -61,9 +63,12 @@
     </aside>
     <main class="main-panel">
       <header class="topbar">
-        <div>
-          <span class="eyebrow">Workspace</span>
-          <h1>{{ title }}</h1>
+        <div class="topbar-title">
+          <el-button class="mobile-menu-button" :icon="Menu" circle title="打开导航" aria-label="打开导航" @click="openMobileNav" />
+          <div class="topbar-copy">
+            <span class="eyebrow">Workspace</span>
+            <h1>{{ title }}</h1>
+          </div>
         </div>
         <div class="topbar-actions">
           <PwaInstallButton placement="bottom" />
@@ -93,6 +98,8 @@ import {
   Files,
   Guide,
   Link,
+  Close,
+  Menu,
   Monitor,
   SwitchButton,
   Tools,
@@ -113,6 +120,7 @@ const appVersion = typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __AP
 const navRef = ref<HTMLElement | null>(null)
 const canScrollNavLeft = ref(false)
 const canScrollNavRight = ref(false)
+const mobileNavOpen = ref(false)
 let navMeasureFrame = 0
 let navActiveScrollTimer = 0
 const { status: socketStatus, connect: connectSocket, stop: stopSocket } = useStatusSocket(() => {}, {
@@ -226,6 +234,14 @@ function scrollNav(direction: 'left' | 'right') {
   window.setTimeout(updateNavScrollState, 260)
 }
 
+function openMobileNav() {
+  mobileNavOpen.value = true
+}
+
+function closeMobileNav() {
+  mobileNavOpen.value = false
+}
+
 async function logout() {
   try {
     await ElMessageBox.confirm('确认退出当前账号吗？退出后需要重新登录才能继续使用系统。', '退出登录', {
@@ -246,6 +262,7 @@ async function logout() {
 watch(
   () => route.path,
   () => {
+    closeMobileNav()
     nextTick(() => scrollActiveNavIntoView())
   },
 )

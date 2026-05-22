@@ -45,6 +45,7 @@ from app.services.smart_proxy import (
     add_smart_proxy_switch_log,
     ensure_unique_port,
     mihomo_core_status,
+    normalize_data_source,
     normalize_proxy_type,
     normalize_strategy,
     public_endpoint_for,
@@ -167,6 +168,16 @@ async def _mark_all_configs_changed(session: SessionDep) -> None:
         proxy.config_updated_at = now
 
 
+async def _ensure_unique_name(session: SessionDep, name: str, *, exclude_id: int | None = None) -> None:
+    normalized = name.strip()
+    stmt = select(SmartProxy).where(func.lower(SmartProxy.name) == normalized.lower())
+    if exclude_id is not None:
+        stmt = stmt.where(SmartProxy.id != exclude_id)
+    existing = await session.scalar(stmt)
+    if existing is not None:
+        raise SmartProxyError(f"智能代理名称「{normalized}」已存在")
+
+
 def _apply_status(proxy: SmartProxy) -> tuple[str, str | None]:
     if not proxy.enabled:
         return "disabled", "代理未启用，不会出现在 Mihomo 运行配置中。"
@@ -177,7 +188,7 @@ def _apply_status(proxy: SmartProxy) -> tuple[str, str | None]:
         return "pending", "尚未应用到 Mihomo，请点击顶部“重新应用到 Mihomo”。"
     if config_updated_at and last_applied_at + APPLY_STATUS_TOLERANCE < config_updated_at:
         return "pending", "代理配置已变更，尚未重新应用到 Mihomo。"
-    if proxy.status == "degraded" and proxy.last_error:
+    if proxy.status in {"degraded", "core_unavailable", "proxy_unavailable"} and proxy.last_error:
         return "failed", proxy.last_error
     return "applied", "当前配置已成功应用到 Mihomo。"
 
@@ -199,7 +210,14 @@ async def _read_proxy(
 
 
 async def _ensure_node_pool_for_candidates(session: SessionDep, actor: str) -> None:
-    smart_proxy_count = await session.scalar(select(func.count()).select_from(SmartProxy)) or 0
+    smart_proxy_count = (
+        await session.scalar(
+            select(func.count())
+            .select_from(SmartProxy)
+            .where(SmartProxy.data_source != "ant")
+        )
+        or 0
+    )
     if smart_proxy_count <= 0:
         return
     existing_nodes = await session.scalar(select(func.count()).select_from(Node)) or 0
@@ -240,6 +258,12 @@ def _runtime_response(result) -> SmartProxyRuntime:  # type: ignore[no-untyped-d
 
 
 def _prepare_payload(data: dict) -> dict:
+    if "name" in data and data["name"] is not None:
+        data["name"] = str(data["name"]).strip()
+        if not data["name"]:
+            raise SmartProxyError("请填写代理名称")
+    if "data_source" in data and data["data_source"] is not None:
+        data["data_source"] = normalize_data_source(str(data["data_source"]))
     if "proxy_type" in data and data["proxy_type"] is not None:
         data["proxy_type"] = normalize_proxy_type(str(data["proxy_type"]))
     if "strategy" in data and data["strategy"] is not None:
@@ -254,6 +278,9 @@ def _prepare_payload(data: dict) -> dict:
                 data[key] = [int(item) for item in data[key] if str(item).strip()]
             except ValueError as exc:
                 raise SmartProxyError(f"Invalid {key} item") from exc
+    for key in ("ant_node_ids", "ant_strategy_node_ids"):
+        if key in data and data[key] is not None:
+            data[key] = [str(item).strip() for item in data[key] if str(item).strip()]
     if "protocol_types" in data and data["protocol_types"] is not None:
         data["protocol_types"] = [str(item).lower() for item in data["protocol_types"] if str(item).strip()]
     if "access_token" in data and data["access_token"] is not None:
@@ -276,17 +303,31 @@ def _prepare_payload(data: dict) -> dict:
         data["stability_priority"] = True
     elif data.get("strategy") and data.get("strategy") not in {"select", "fallback"}:
         data["stability_priority"] = False
+    if data.get("data_source") == "ant":
+        data["subscription_ids"] = []
+        data["node_ids"] = []
+        data["strategy_node_ids"] = []
+    elif data.get("data_source") == "subscription":
+        data["ant_node_ids"] = []
+        data["ant_strategy_node_ids"] = []
     return data
 
 
 def _validate_strategy_config(
     strategy: str,
+    data_source: str,
     source_mode: str,
     node_ids: list[int] | None,
     strategy_node_ids: list[int] | None,
+    ant_node_ids: list[str] | None,
+    ant_strategy_node_ids: list[str] | None,
 ) -> None:
-    source_nodes = node_ids or []
-    strategy_nodes = strategy_node_ids or []
+    if data_source == "ant":
+        source_nodes = ant_node_ids or []
+        strategy_nodes = ant_strategy_node_ids or []
+    else:
+        source_nodes = node_ids or []
+        strategy_nodes = strategy_node_ids or []
     if source_mode == "manual" and not source_nodes:
         raise SmartProxyError("手动节点模式请至少选择一个节点")
     known_candidate_count = len(strategy_nodes) if strategy_nodes else (len(source_nodes) if source_mode == "manual" else None)
@@ -301,15 +342,23 @@ def _validate_strategy_config(
 
 
 def _validate_source_config(
+    data_source: str,
     source_mode: str,
     subscription_ids: list[int] | None,
     country_codes: list[str] | None,
     tags: list[str] | None,
     node_ids: list[int] | None,
+    ant_node_ids: list[str] | None,
 ) -> None:
-    if source_mode == "manual" and not (node_ids or []):
+    if source_mode == "subscription" and data_source == "ant":
+        raise SmartProxyError("蚂蚁节点暂不支持指定订阅来源")
+    if source_mode == "manual" and data_source == "ant" and not (ant_node_ids or []):
+        raise SmartProxyError("手动节点模式请至少选择一个蚂蚁节点")
+    if data_source == "ant":
+        return
+    if source_mode == "manual" and data_source != "ant" and not (node_ids or []):
         raise SmartProxyError("手动节点模式请至少选择一个节点")
-    if source_mode == "subscription" and not (subscription_ids or []):
+    if source_mode == "subscription" and data_source != "ant" and not (subscription_ids or []):
         raise SmartProxyError("指定订阅模式请至少选择一个订阅来源")
     if source_mode == "country" and not (country_codes or []):
         raise SmartProxyError("指定国家模式请至少选择一个国家/地区")
@@ -318,8 +367,25 @@ def _validate_source_config(
 
 
 def _validate_proxy_strategy(proxy: SmartProxy) -> None:
-    _validate_source_config(proxy.source_mode, proxy.subscription_ids, proxy.country_codes, proxy.tags, proxy.node_ids)
-    _validate_strategy_config(proxy.strategy, proxy.source_mode, proxy.node_ids, proxy.strategy_node_ids)
+    data_source = normalize_data_source(str(getattr(proxy, "data_source", "") or "subscription"))
+    _validate_source_config(
+        data_source,
+        proxy.source_mode,
+        proxy.subscription_ids,
+        proxy.country_codes,
+        proxy.tags,
+        proxy.node_ids,
+        proxy.ant_node_ids,
+    )
+    _validate_strategy_config(
+        proxy.strategy,
+        data_source,
+        proxy.source_mode,
+        proxy.node_ids,
+        proxy.strategy_node_ids,
+        proxy.ant_node_ids,
+        proxy.ant_strategy_node_ids,
+    )
 
 
 async def _set_setting(session: SessionDep, key: str, value: str) -> None:
@@ -392,21 +458,30 @@ async def create_smart_proxy(
         data["port"] = await allocate_smart_proxy_port(session)
     try:
         _validate_source_config(
+            str(data.get("data_source") or "subscription"),
             str(data.get("source_mode") or "all"),
             data.get("subscription_ids") or [],
             data.get("country_codes") or [],
             data.get("tags") or [],
             data.get("node_ids") or [],
+            data.get("ant_node_ids") or [],
         )
         _validate_strategy_config(
             str(data.get("strategy") or "fallback"),
+            str(data.get("data_source") or "subscription"),
             str(data.get("source_mode") or "all"),
             data.get("node_ids") or [],
             data.get("strategy_node_ids") or [],
+            data.get("ant_node_ids") or [],
+            data.get("ant_strategy_node_ids") or [],
         )
     except SmartProxyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    await ensure_unique_port(session, int(data["port"]))
+    try:
+        await _ensure_unique_name(session, str(data["name"]))
+        await ensure_unique_port(session, int(data["port"]))
+    except SmartProxyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     proxy = SmartProxy(**data, status="stopped", config_updated_at=now_china())
     session.add(proxy)
     await write_audit(
@@ -516,11 +591,36 @@ async def smart_proxy_metadata(session: SessionDep, current_user: CurrentUser) -
         if protocol:
             protocol_set.add(str(protocol).strip())
 
+    from app.services.ant_proxy import ant_proxy_service
+
+    ant_country_counts: dict[tuple[str, str], int] = {}
+    ant_tag_counts: dict[tuple[str, str], int] = {}
+    ant_protocol_set: set[str] = set()
+    for node in ant_proxy_service.nodes:
+        if node.country_code:
+            key = (str(node.country_code).upper(), str(node.country or node.city or ""))
+            ant_country_counts[key] = ant_country_counts.get(key, 0) + 1
+        if node.line_type:
+            key = (f"line:{node.line_type}", node.line_label or node.line_type)
+            ant_tag_counts[key] = ant_tag_counts.get(key, 0) + 1
+        if node.transport:
+            ant_protocol_set.add(str(node.transport).strip().lower())
+
     return SmartProxyMetadata(
         countries=countries,
         subscriptions=subscriptions,
         tags=sorted(tag_set),
         protocol_types=sorted(protocol_set),
+        ant_loaded=bool(ant_proxy_service.nodes),
+        ant_countries=[
+            {"code": code, "name": name, "nodes": count}
+            for (code, name), count in sorted(ant_country_counts.items(), key=lambda item: item[0][0])
+        ],
+        ant_tags=[
+            {"value": value, "label": label, "nodes": count}
+            for (value, label), count in sorted(ant_tag_counts.items(), key=lambda item: item[0][1])
+        ],
+        ant_protocol_types=sorted(ant_protocol_set),
         presets=SMART_PROXY_PRESETS,
     )
 
@@ -758,8 +858,13 @@ async def update_smart_proxy(
         data = _prepare_payload(payload.model_dump(exclude_unset=True))
     except SmartProxyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if "port" in data and data["port"] is not None:
-        await ensure_unique_port(session, int(data["port"]), exclude_id=proxy.id)
+    try:
+        if "port" in data and data["port"] is not None:
+            await ensure_unique_port(session, int(data["port"]), exclude_id=proxy.id)
+        if "name" in data and data["name"] is not None:
+            await _ensure_unique_name(session, str(data["name"]), exclude_id=proxy.id)
+    except SmartProxyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         for key, value in data.items():
             setattr(proxy, key, value)

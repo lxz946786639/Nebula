@@ -57,8 +57,14 @@ class AntProxyStatus(BaseModel):
     selected_node: AntProxyNode | None = None
     running: bool = False
     listen_host: str = "127.0.0.1"
-    listen_port: int = 18080
-    endpoint: str = "socks5://127.0.0.1:18080"
+    listen_port: int = 37890
+    endpoint: str = "socks5://127.0.0.1:37890"
+    runtime_mode: str = "mihomo"
+    mihomo_group: str = ""
+    adapter_count: int = 0
+    health_check_url: str = "http://www.gstatic.com/generate_204"
+    health_check_interval: int = 300
+    tolerance: int = 100
     active_connections: int = 0
     total_connections: int = 0
     upload_bytes: int = 0
@@ -83,6 +89,18 @@ class AntProxyRefreshRequest(BaseModel):
     line_type: str | None = None
 
 
+class AntProxyScheduleConfig(BaseModel):
+    enabled: bool = True
+    interval_minutes: int = 360
+    last_refreshed_at: datetime | None = None
+    next_refresh_at: datetime | None = None
+
+
+class AntProxyScheduleUpdate(BaseModel):
+    enabled: bool | None = None
+    interval_minutes: int | None = Field(default=None, ge=0, le=43200)
+
+
 class AntProxyLoginRequest(BaseModel):
     username: str
     password: str
@@ -96,7 +114,10 @@ class AntProxySelectRequest(BaseModel):
 class AntProxyStartRequest(BaseModel):
     node_id: str | None = None
     listen_host: str = "127.0.0.1"
-    listen_port: int = Field(default=18080, ge=1, le=65535)
+    listen_port: int | None = Field(default=None, ge=1, le=65535)
+    health_check_url: str = "http://www.gstatic.com/generate_204"
+    health_check_interval: int = Field(default=300, ge=30, le=86400)
+    tolerance: int = Field(default=100, ge=0, le=10000)
 
 
 class AntProxyTestRequest(BaseModel):

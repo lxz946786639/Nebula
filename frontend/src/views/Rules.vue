@@ -4,7 +4,8 @@
       <span></span>
       <el-button type="primary" :icon="Plus" @click="openCreate">新增规则</el-button>
     </div>
-    <el-table class="list-table desktop-table" :data="items" stripe height="100%">
+    <div class="table-wrap has-cards desktop-table">
+      <el-table class="list-table" :data="items" stripe height="100%">
       <el-table-column prop="name" label="名称" min-width="180" />
       <el-table-column prop="remote_config_url" label="远程配置" min-width="260" show-overflow-tooltip />
       <el-table-column label="默认" width="90">
@@ -18,8 +19,9 @@
           <el-button :icon="Delete" circle title="删除规则" type="danger" @click="remove(row.id)" />
         </template>
       </el-table-column>
-    </el-table>
-    <div class="mobile-card-list">
+      </el-table>
+    </div>
+    <div class="mobile-card-list data-cards">
       <el-empty v-if="!items.length" description="暂无规则" :image-size="72" />
       <article v-for="row in items" v-else :key="row.id" class="mobile-card">
         <div class="mobile-card-head">

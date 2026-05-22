@@ -38,6 +38,11 @@ CFB_MODE = decrepit_modes.CFB if decrepit_modes is not None else modes.CFB
 
 DEFAULT_TEST_URL = "http://www.gstatic.com/generate_204"
 DEFAULT_ANT_APP_VERSION = "2.0.9"
+DEFAULT_ANT_LISTEN_PORT = 37890
+DEFAULT_ANT_HEALTH_CHECK_INTERVAL = 300
+DEFAULT_ANT_TOLERANCE = 100
+ANT_MIHOMO_GROUP_NAME = "Nebula::AntProxy::蚂蚁代理"
+ANT_MIHOMO_LISTENER_NAME = "nebula-ant-proxy"
 ANT_API_URLS = [
     "https://antapi.djjecybb.org/api.php",
     "https://antapi2.djjecybb.org/api.php",
@@ -158,10 +163,17 @@ class AntProxyService:
         self.legacy_state_path = _resolve_backend_path(get_settings().ANT_PROXY_STATE_PATH)
         self.persisted = False
         self.last_persisted_at: datetime | None = None
+        self.health_check_url = DEFAULT_TEST_URL
+        self.health_check_interval = DEFAULT_ANT_HEALTH_CHECK_INTERVAL
+        self.tolerance = DEFAULT_ANT_TOLERANCE
 
-        self._server: asyncio.AbstractServer | None = None
+        self._adapter_servers: dict[str, asyncio.AbstractServer] = {}
+        self._adapter_extra_servers: list[asyncio.AbstractServer] = []
+        self._adapter_ports: dict[str, int] = {}
+        self._adapter_bind_host = "127.0.0.1"
+        self._adapter_connect_host = "127.0.0.1"
         self._listen_host = "127.0.0.1"
-        self._listen_port = 18080
+        self._listen_port = DEFAULT_ANT_LISTEN_PORT
         self._writers: set[asyncio.StreamWriter] = set()
         self._lock = asyncio.Lock()
         self.started_at: datetime | None = None
@@ -172,7 +184,7 @@ class AntProxyService:
 
     @property
     def running(self) -> bool:
-        return self._server is not None
+        return bool(self._adapter_servers)
 
     @property
     def endpoint(self) -> str:
@@ -364,6 +376,12 @@ class AntProxyService:
             "listen_host": self._listen_host,
             "listen_port": self._listen_port,
             "endpoint": self.endpoint,
+            "runtime_mode": "mihomo",
+            "mihomo_group": ANT_MIHOMO_GROUP_NAME,
+            "adapter_count": len(self._adapter_servers),
+            "health_check_url": self.health_check_url,
+            "health_check_interval": self.health_check_interval,
+            "tolerance": self.tolerance,
             "active_connections": self.active_connections,
             "total_connections": self.total_connections,
             "upload_bytes": self.upload_bytes,
@@ -417,6 +435,9 @@ class AntProxyService:
         listen_port = _safe_int(payload.get("listen_port")) or self._listen_port
         if listen_port < 1 or listen_port > 65535:
             listen_port = self._listen_port
+        self.health_check_url = str(payload.get("health_check_url") or DEFAULT_TEST_URL).strip() or DEFAULT_TEST_URL
+        self.health_check_interval = max(30, _safe_int(payload.get("health_check_interval")) or DEFAULT_ANT_HEALTH_CHECK_INTERVAL)
+        self.tolerance = max(0, _safe_int(payload.get("tolerance")) if payload.get("tolerance") is not None else DEFAULT_ANT_TOLERANCE)
 
         self._apply_data(
             payload.get("data"),
@@ -448,6 +469,9 @@ class AntProxyService:
             "selected_node_id": self.selected_node_id,
             "listen_host": self._listen_host,
             "listen_port": self._listen_port,
+            "health_check_url": self.health_check_url,
+            "health_check_interval": self.health_check_interval,
+            "tolerance": self.tolerance,
             "data": _static_ant_data(self.data),
         }
 
@@ -539,7 +563,18 @@ class AntProxyService:
         self.last_error = None
         return node
 
-    async def start(self, *, listen_host: str = "127.0.0.1", listen_port: int = 18080, node_id: str | None = None) -> None:
+    async def start(
+        self,
+        *,
+        listen_host: str = "127.0.0.1",
+        listen_port: int = DEFAULT_ANT_LISTEN_PORT,
+        node_id: str | None = None,
+        adapter_bind_host: str = "127.0.0.1",
+        adapter_connect_host: str = "127.0.0.1",
+        health_check_url: str | None = None,
+        health_check_interval: int | None = None,
+        tolerance: int | None = None,
+    ) -> None:
         async with self._lock:
             self.ensure_loaded()
             if node_id:
@@ -551,27 +586,70 @@ class AntProxyService:
             listen_port = int(listen_port)
             if listen_port < 1 or listen_port > 65535:
                 raise AntProxyError("监听端口无效")
+            self.health_check_url = (health_check_url or self.health_check_url or DEFAULT_TEST_URL).strip() or DEFAULT_TEST_URL
+            self.health_check_interval = max(30, int(health_check_interval or self.health_check_interval or DEFAULT_ANT_HEALTH_CHECK_INTERVAL))
+            self.tolerance = max(0, int(tolerance if tolerance is not None else self.tolerance))
 
-            if self.running and self._listen_host == listen_host and self._listen_port == listen_port:
+            node_ids = {node.id for node in self.nodes}
+            if (
+                self.running
+                and self._listen_host == listen_host
+                and self._listen_port == listen_port
+                and self._adapter_bind_host == adapter_bind_host
+                and self._adapter_connect_host == adapter_connect_host
+                and set(self._adapter_servers) == node_ids
+            ):
                 return
 
             if self.running:
                 await self.stop()
 
+            bind_hosts = _adapter_bind_hosts(adapter_bind_host)
+            started_servers: dict[str, asyncio.AbstractServer] = {}
+            started_extra_servers: list[asyncio.AbstractServer] = []
+            started_ports: dict[str, int] = {}
             try:
-                self._server = await asyncio.start_server(self._handle_client, listen_host, listen_port)
-            except OSError as exc:
-                raise AntProxyError(f"启动内置代理失败：{exc}") from exc
+                for node in self.nodes:
+                    handler = lambda reader, writer, node_id=node.id: self._handle_client(reader, writer, node_id)
+                    server = await asyncio.start_server(
+                        handler,
+                        bind_hosts[0],
+                        0,
+                    )
+                    socket_info = server.sockets[0].getsockname() if server.sockets else None
+                    if not socket_info:
+                        raise AntProxyError("Ant 内部适配器端口分配失败")
+                    port = int(socket_info[1])
+                    for bind_host in bind_hosts[1:]:
+                        try:
+                            extra_server = await asyncio.start_server(handler, bind_host, port)
+                            started_extra_servers.append(extra_server)
+                        except OSError:
+                            continue
+                    started_servers[node.id] = server
+                    started_ports[node.id] = port
+            except Exception as exc:
+                for server in [*started_servers.values(), *started_extra_servers]:
+                    server.close()
+                    await server.wait_closed()
+                raise AntProxyError(f"启动 Ant 内部适配器失败：{exc}") from exc
 
+            self._adapter_servers = started_servers
+            self._adapter_extra_servers = started_extra_servers
+            self._adapter_ports = started_ports
+            self._adapter_bind_host = adapter_bind_host
+            self._adapter_connect_host = adapter_connect_host
             self._listen_host = listen_host
             self._listen_port = listen_port
             self.started_at = datetime.now(timezone.utc)
             self.last_error = None
 
     async def stop(self) -> None:
-        server = self._server
-        self._server = None
-        if server is not None:
+        servers = [*self._adapter_servers.values(), *self._adapter_extra_servers]
+        self._adapter_servers.clear()
+        self._adapter_extra_servers.clear()
+        self._adapter_ports.clear()
+        for server in servers:
             server.close()
             await server.wait_closed()
 
@@ -580,6 +658,76 @@ class AntProxyService:
         self._writers.clear()
         self.active_connections = 0
         self.started_at = None
+
+    def mihomo_runtime_config(self, *, listen_host: str | None = None) -> dict[str, list[dict[str, Any]]] | None:
+        if not self.running:
+            return None
+
+        proxies: list[dict[str, Any]] = []
+        proxy_names: list[str] = []
+        for node in self._runtime_nodes():
+            port = self._adapter_ports.get(node.id)
+            if not port:
+                continue
+            name = _mihomo_ant_node_name(node)
+            proxies.append(
+                {
+                    "name": name,
+                    "type": "socks5",
+                    "server": self._adapter_connect_host,
+                    "port": port,
+                    "udp": False,
+                }
+            )
+            proxy_names.append(name)
+
+        if not proxies:
+            return None
+
+        return {
+            "proxies": proxies,
+            "proxy-groups": [
+                {
+                    "name": ANT_MIHOMO_GROUP_NAME,
+                    "type": "url-test",
+                    "proxies": proxy_names,
+                    "url": self.health_check_url or DEFAULT_TEST_URL,
+                    "interval": self.health_check_interval,
+                    "tolerance": self.tolerance,
+                }
+            ],
+            "listeners": [
+                {
+                    "name": ANT_MIHOMO_LISTENER_NAME,
+                    "type": "socks",
+                    "listen": listen_host or self._listen_host,
+                    "port": self._listen_port,
+                    "proxy": ANT_MIHOMO_GROUP_NAME,
+                    "udp": False,
+                }
+            ],
+        }
+
+    def _runtime_nodes(self) -> list[AntNode]:
+        selected = self.selected_node
+        if selected is None:
+            return list(self.nodes)
+        return [selected, *[node for node in self.nodes if node.id != selected.id]]
+
+    def mihomo_node_name(self, node: AntNode) -> str:
+        return _mihomo_ant_node_name(node)
+
+    def mihomo_proxy_config_for_node(self, node: AntNode) -> dict[str, Any] | None:
+        port = self._adapter_ports.get(node.id)
+        if not self.running or not port:
+            return None
+        return {
+            "name": self.mihomo_node_name(node),
+            "type": "socks5",
+            "server": self._adapter_connect_host,
+            "port": port,
+            "udp": False,
+        }
 
     async def test(self, url: str = DEFAULT_TEST_URL, timeout: float = 15) -> dict[str, Any]:
         self.ensure_loaded()
@@ -695,13 +843,18 @@ class AntProxyService:
             "selected": node.id == self.selected_node_id,
         }
 
-    async def _handle_client(self, local_reader: asyncio.StreamReader, local_writer: asyncio.StreamWriter) -> None:
+    async def _handle_client(
+        self,
+        local_reader: asyncio.StreamReader,
+        local_writer: asyncio.StreamWriter,
+        node_id: str | None = None,
+    ) -> None:
         self._writers.add(local_writer)
         self.active_connections += 1
         self.total_connections += 1
         remote_writer: asyncio.StreamWriter | None = None
         try:
-            node = self.selected_node
+            node = self.find_node(node_id, required=False) if node_id else self.selected_node
             if not node:
                 raise AntProxyError("没有可用 Ant 节点")
             target = await _read_socks5_request(local_reader, local_writer)
@@ -947,9 +1100,11 @@ def _normalize_server(source: str, group: str, server: Any) -> AntNode | None:
         return None
     transport = str(server.get("Protocol") or "").lower()
     name = str(server.get("Description") or "-".join(str(item) for item in (server.get("Country") or server.get("City"), host, port) if item))
-    node_id = hashlib.sha256(f"{host}\0{port}\0{password}\0{cipher}\0{transport}\0{name}".encode("utf-8")).hexdigest()[:16]
     pay_type = str(server.get("PayType") or "")
     line_type, line_label = _line_type_and_label(group, pay_type)
+    node_id = hashlib.sha256(
+        f"{line_type}\0{group}\0{host}\0{port}\0{password}\0{cipher}\0{transport}\0{name}".encode("utf-8")
+    ).hexdigest()[:16]
     return AntNode(
         id=node_id,
         source=source,
@@ -1010,6 +1165,15 @@ def _account_refresh_groups(line_type: str | None = None) -> list[tuple[str, str
     if line_type is None:
         return groups
     return [item for item in groups if item[2] == line_type]
+
+
+def _adapter_bind_hosts(value: str) -> list[str]:
+    hosts = [item.strip() for item in str(value or "").split(",") if item.strip()]
+    return hosts or ["127.0.0.1"]
+
+
+def _mihomo_ant_node_name(node: AntNode) -> str:
+    return f"ant-{node.id} [{node.line_label}] {node.name}".strip()
 
 
 def _server_connections_sort_key(server: dict[str, Any]) -> int:

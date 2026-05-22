@@ -14,28 +14,28 @@
 
         <div class="character-stage" aria-hidden="true">
           <div class="characters-scene">
-            <div ref="purpleRef" class="character-figure character-purple" :style="purpleStyle">
+            <div ref="terracottaRef" class="character-figure character-terracotta" :style="terracottaStyle">
               <div class="character-face">
                 <span class="character-eye"><span class="character-pupil"></span></span>
                 <span class="character-eye"><span class="character-pupil"></span></span>
               </div>
             </div>
 
-            <div ref="blackRef" class="character-figure character-black" :style="blackStyle">
+            <div ref="inkRef" class="character-figure character-ink" :style="inkStyle">
               <div class="character-face">
                 <span class="character-eye"><span class="character-pupil"></span></span>
                 <span class="character-eye"><span class="character-pupil"></span></span>
               </div>
             </div>
 
-            <div ref="orangeRef" class="character-figure character-orange" :style="orangeStyle">
+            <div ref="clayRef" class="character-figure character-clay" :style="clayStyle">
               <div class="character-face character-face-dot">
                 <span class="dot-eye"></span>
                 <span class="dot-eye"></span>
               </div>
             </div>
 
-            <div ref="yellowRef" class="character-figure character-yellow" :style="yellowStyle">
+            <div ref="ochreRef" class="character-figure character-ochre" :style="ochreStyle">
               <div class="character-face character-face-dot">
                 <span class="dot-eye"></span>
                 <span class="dot-eye"></span>
@@ -111,7 +111,7 @@ import { useRoute, useRouter } from 'vue-router'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useAuthStore } from '@/stores/auth'
 
-type CharacterKey = 'purple' | 'black' | 'orange' | 'yellow'
+type CharacterKey = 'terracotta' | 'ink' | 'clay' | 'ochre'
 type CharacterStyle = Record<string, string | number>
 
 const router = useRouter()
@@ -122,10 +122,10 @@ const form = reactive({ username: '', password: '' })
 const activeField = ref<'username' | 'password' | null>(null)
 const showPassword = ref(false)
 const mouse = reactive({ x: 0, y: 0 })
-const purpleRef = ref<HTMLElement | null>(null)
-const blackRef = ref<HTMLElement | null>(null)
-const orangeRef = ref<HTMLElement | null>(null)
-const yellowRef = ref<HTMLElement | null>(null)
+const terracottaRef = ref<HTMLElement | null>(null)
+const inkRef = ref<HTMLElement | null>(null)
+const clayRef = ref<HTMLElement | null>(null)
+const ochreRef = ref<HTMLElement | null>(null)
 
 const hasPassword = computed(() => form.password.length > 0)
 const isCovering = computed(() => activeField.value === 'password' && !showPassword.value)
@@ -136,10 +136,10 @@ const characterCaption = computed(() => {
   if (activeField.value === 'username') return '正在识别账号'
   return '安全登录'
 })
-const purpleStyle = computed(() => characterStyle('purple'))
-const blackStyle = computed(() => characterStyle('black'))
-const orangeStyle = computed(() => characterStyle('orange'))
-const yellowStyle = computed(() => characterStyle('yellow'))
+const terracottaStyle = computed(() => characterStyle('terracotta'))
+const inkStyle = computed(() => characterStyle('ink'))
+const clayStyle = computed(() => characterStyle('clay'))
+const ochreStyle = computed(() => characterStyle('ochre'))
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
@@ -202,13 +202,13 @@ function baseCharacterStyle(params: {
 
 function characterStyle(character: CharacterKey) {
   const styles: Record<CharacterKey, CharacterStyle> = {
-    purple: baseCharacterStyle({
-      element: purpleRef.value,
+    terracotta: baseCharacterStyle({
+      element: terracottaRef.value,
       left: 70,
       width: 180,
       height: 400,
       radius: '10px 10px 0 0',
-      color: '#6C3FF5',
+      color: 'var(--accent-strong)',
       zIndex: 1,
       faceLeft: 45,
       faceTop: 40,
@@ -217,13 +217,13 @@ function characterStyle(character: CharacterKey) {
       pupilSize: 7,
       blinkDelay: '0s',
     }),
-    black: baseCharacterStyle({
-      element: blackRef.value,
+    ink: baseCharacterStyle({
+      element: inkRef.value,
       left: 240,
       width: 120,
       height: 310,
       radius: '8px 8px 0 0',
-      color: '#2D2D2D',
+      color: 'var(--heading)',
       zIndex: 2,
       faceLeft: 26,
       faceTop: 32,
@@ -233,13 +233,13 @@ function characterStyle(character: CharacterKey) {
       blinkDelay: '1.4s',
       transformMultiplier: 1.5,
     }),
-    orange: baseCharacterStyle({
-      element: orangeRef.value,
+    clay: baseCharacterStyle({
+      element: clayRef.value,
       left: 0,
       width: 240,
       height: 200,
       radius: '120px 120px 0 0',
-      color: '#FF9B6B',
+      color: 'var(--accent-hover)',
       zIndex: 3,
       faceLeft: 82,
       faceTop: 90,
@@ -247,13 +247,13 @@ function characterStyle(character: CharacterKey) {
       eyeSize: 12,
       blinkDelay: '0.7s',
     }),
-    yellow: baseCharacterStyle({
-      element: yellowRef.value,
+    ochre: baseCharacterStyle({
+      element: ochreRef.value,
       left: 310,
       width: 140,
       height: 230,
       radius: '70px 70px 0 0',
-      color: '#E8D754',
+      color: 'var(--warning)',
       zIndex: 4,
       faceLeft: 52,
       faceTop: 40,
@@ -266,7 +266,7 @@ function characterStyle(character: CharacterKey) {
   const style = styles[character]
 
   if (activeField.value === 'username') {
-    if (character === 'purple') {
+    if (character === 'terracotta') {
       style.height = '440px'
       style.transform = 'skewX(-12deg) translateX(40px)'
       style['--face-left'] = '55px'
@@ -274,7 +274,7 @@ function characterStyle(character: CharacterKey) {
       style['--look-x'] = '3px'
       style['--look-y'] = '4px'
     }
-    if (character === 'black') {
+    if (character === 'ink') {
       style.transform = 'skewX(10deg) translateX(20px)'
       style['--face-left'] = '32px'
       style['--face-top'] = '12px'
@@ -283,7 +283,7 @@ function characterStyle(character: CharacterKey) {
   }
 
   if (hasPassword.value && !showPassword.value) {
-    if (character === 'purple') {
+    if (character === 'terracotta') {
       style.height = '440px'
       style.transform = 'skewX(-12deg) translateX(40px)'
       style['--face-left'] = '55px'
@@ -291,7 +291,7 @@ function characterStyle(character: CharacterKey) {
       style['--look-x'] = '3px'
       style['--look-y'] = '4px'
     }
-    if (character === 'black') {
+    if (character === 'ink') {
       style.transform = 'skewX(-3deg)'
       style['--look-y'] = '-4px'
     }
@@ -302,20 +302,20 @@ function characterStyle(character: CharacterKey) {
     style['--look-x'] = '-5px'
     style['--look-y'] = '-4px'
 
-    if (character === 'purple') {
+    if (character === 'terracotta') {
       style.height = '400px'
       style['--face-left'] = '20px'
       style['--face-top'] = '35px'
     }
-    if (character === 'black') {
+    if (character === 'ink') {
       style['--face-left'] = '10px'
       style['--face-top'] = '28px'
     }
-    if (character === 'orange') {
+    if (character === 'clay') {
       style['--face-left'] = '50px'
       style['--face-top'] = '85px'
     }
-    if (character === 'yellow') {
+    if (character === 'ochre') {
       style['--face-left'] = '20px'
       style['--face-top'] = '35px'
       style['--mouth-left'] = '10px'
@@ -369,7 +369,13 @@ onBeforeUnmount(() => {
   place-items: center;
   padding: 28px;
   overflow: auto;
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 18% 14%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 28rem),
+    radial-gradient(circle at 82% 6%, color-mix(in srgb, var(--warning) 12%, transparent), transparent 26rem),
+    linear-gradient(rgba(255, 244, 224, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 244, 224, 0.03) 1px, transparent 1px),
+    var(--bg);
+  background-size: auto, auto, 26px 26px, 26px 26px, auto;
 }
 
 .login-shell {
@@ -408,7 +414,7 @@ onBeforeUnmount(() => {
 .login-card {
   min-height: 560px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow);
 }
 
@@ -419,12 +425,14 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   padding: 30px;
   overflow: hidden;
-  color: #f8fafc;
+  color: var(--heading);
   background:
-    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
-    linear-gradient(135deg, #34313c 0%, #24222b 44%, #17171d 100%);
-  background-size: 20px 20px, 20px 20px, auto;
+    radial-gradient(circle at 78% 78%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 16rem),
+    radial-gradient(circle at 18% 30%, color-mix(in srgb, var(--warning) 12%, transparent), transparent 14rem),
+    linear-gradient(rgba(255, 244, 224, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 244, 224, 0.05) 1px, transparent 1px),
+    linear-gradient(135deg, color-mix(in srgb, var(--panel-2) 78%, var(--accent-deep) 22%) 0%, var(--panel) 52%, var(--bg) 100%);
+  background-size: auto, auto, 20px 20px, 20px 20px, auto;
 }
 
 .login-character-panel::before {
@@ -434,7 +442,7 @@ onBeforeUnmount(() => {
   width: 270px;
   height: 270px;
   content: '';
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--accent-hover) 18%, transparent);
   border-radius: 999px;
   filter: blur(44px);
 }
@@ -446,7 +454,7 @@ onBeforeUnmount(() => {
   width: 210px;
   height: 210px;
   content: '';
-  background: rgba(232, 215, 84, 0.18);
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
   border-radius: 999px;
   filter: blur(54px);
 }
@@ -467,8 +475,8 @@ onBeforeUnmount(() => {
 .login-brand .brand-mark {
   width: 42px;
   height: 42px;
-  color: #101014;
-  background: #f8fafc;
+  color: var(--accent-contrast);
+  background: var(--accent);
 }
 
 .login-brand strong,
@@ -478,7 +486,7 @@ onBeforeUnmount(() => {
 
 .login-brand span {
   margin-top: 2px;
-  color: rgba(248, 250, 252, 0.64);
+  color: color-mix(in srgb, var(--heading) 66%, transparent);
   font-size: 12px;
 }
 
@@ -502,7 +510,7 @@ onBeforeUnmount(() => {
 .character-figure {
   position: absolute;
   bottom: 0;
-  box-shadow: 0 28px 52px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 28px 52px rgba(34, 19, 9, 0.2);
   transform-origin: bottom center;
   transition:
     height 0.7s ease-in-out,
@@ -528,7 +536,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: #ffffff;
+  background: #fff1dc;
   border-radius: 999px;
   animation: login-blink 5.2s infinite;
   animation-delay: var(--blink-delay);
@@ -537,7 +545,7 @@ onBeforeUnmount(() => {
 .character-pupil {
   width: var(--pupil-size);
   height: var(--pupil-size);
-  background: #2d2d2d;
+  background: #2a1710;
   border-radius: 999px;
   transform: translate(var(--look-x), var(--look-y));
   transition: transform 0.12s ease-out;
@@ -546,7 +554,7 @@ onBeforeUnmount(() => {
 .dot-eye {
   width: var(--eye-size);
   height: var(--eye-size);
-  background: #2d2d2d;
+  background: #2a1710;
   border-radius: 999px;
   transform: translate(var(--look-x), var(--look-y));
   transition: transform 0.12s ease-out;
@@ -558,7 +566,7 @@ onBeforeUnmount(() => {
   left: var(--mouth-left);
   width: 80px;
   height: 4px;
-  background: #2d2d2d;
+  background: #2a1710;
   border-radius: 999px;
   transition:
     top 0.2s ease-out,
@@ -571,9 +579,9 @@ onBeforeUnmount(() => {
   animation-duration: 2.8s;
 }
 
-.login-character-panel.is-covering .character-purple,
-.login-character-panel.is-covering .character-black {
-  box-shadow: 0 34px 70px rgba(0, 0, 0, 0.25);
+.login-character-panel.is-covering .character-terracotta,
+.login-character-panel.is-covering .character-ink {
+  box-shadow: 0 34px 70px rgba(34, 19, 9, 0.28);
 }
 
 .login-character-panel.is-covering .character-mouth {
@@ -587,21 +595,21 @@ onBeforeUnmount(() => {
   gap: 8px;
   min-height: 34px;
   padding: 0 12px;
-  color: rgba(248, 250, 252, 0.76);
+  color: color-mix(in srgb, var(--heading) 78%, transparent);
   font-size: 13px;
   font-weight: 650;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: color-mix(in srgb, var(--panel-soft) 74%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
   border-radius: 999px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--dashboard-shadow);
 }
 
 .caption-dot {
   width: 8px;
   height: 8px;
-  background: #4ade80;
+  background: var(--success);
   border-radius: 999px;
-  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent);
 }
 
 .login-card {

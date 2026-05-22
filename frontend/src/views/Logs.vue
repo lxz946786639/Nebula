@@ -20,7 +20,7 @@
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 
-    <div class="logs-table-wrap desktop-table">
+    <div class="logs-table-wrap table-wrap has-cards desktop-table">
       <el-table v-loading="loading" class="list-table" :data="items" stripe height="100%" empty-text="暂无日志">
         <el-table-column label="时间" width="180">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
@@ -36,7 +36,7 @@
         <el-table-column prop="description" label="详情" min-width="360" show-overflow-tooltip class-name="table-cell-left" />
       </el-table>
     </div>
-    <div class="mobile-card-list">
+    <div class="mobile-card-list data-cards">
       <el-empty v-if="!items.length && !loading" description="暂无日志" :image-size="72" />
       <article v-for="row in items" v-else :key="row.id" class="mobile-card">
         <div class="mobile-card-head">

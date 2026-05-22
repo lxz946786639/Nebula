@@ -145,6 +145,23 @@ async def get_smart_proxy_port_range(session: AsyncSession) -> tuple[int, int]:
     return start, end
 
 
+async def get_ant_proxy_auto_refresh_enabled(session: AsyncSession) -> bool:
+    settings = get_settings()
+    return await get_bool_setting(session, "ant_proxy_auto_refresh_enabled", settings.ANT_PROXY_AUTO_REFRESH_ENABLED)
+
+
+async def get_ant_proxy_auto_refresh_interval_minutes(session: AsyncSession) -> int:
+    settings = get_settings()
+    return max(
+        await get_int_setting(
+            session,
+            "ant_proxy_auto_refresh_interval_minutes",
+            settings.ANT_PROXY_AUTO_REFRESH_INTERVAL_MINUTES,
+        ),
+        0,
+    )
+
+
 async def get_mihomo_api_url(session: AsyncSession) -> str:
     settings = get_settings()
     if settings.APP_ENV == "development":

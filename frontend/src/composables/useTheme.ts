@@ -4,8 +4,8 @@ type ThemeMode = 'dark' | 'light'
 
 const STORAGE_KEY = 'nebula-theme'
 const THEME_COLORS: Record<ThemeMode, string> = {
-  dark: '#0f1216',
-  light: '#f6f8fb',
+  dark: '#1d140f',
+  light: '#f5f0e8',
 }
 const theme = ref<ThemeMode>('dark')
 let initialized = false
