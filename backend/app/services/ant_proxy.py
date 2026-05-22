@@ -10,7 +10,6 @@ import os
 import re
 import socket
 import ssl
-import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -802,7 +801,7 @@ class AntProxyService:
 
         async def measure(node: AntNode) -> int | None:
             async with semaphore:
-                latency = await _ping_host(node.server, timeout_ms)
+                latency = await self._measure_node_latency(node, timeout_ms)
                 node.latency_ms = latency
                 return latency
 
@@ -817,6 +816,21 @@ class AntProxyService:
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
             "items": [self.public_node(node) for node in selected_nodes],
         }
+
+    async def _measure_node_latency(self, node: AntNode, timeout_ms: int) -> int | None:
+        started = time.perf_counter()
+        writer: asyncio.StreamWriter | None = None
+        try:
+            _, writer, _ = await asyncio.wait_for(
+                self._connect_ant_remote(node),
+                timeout=max(0.3, timeout_ms / 1000),
+            )
+            return max(1, round((time.perf_counter() - started) * 1000))
+        except Exception:
+            return None
+        finally:
+            if writer is not None:
+                _close_writer(writer)
 
     def public_node(self, node: AntNode | None) -> dict[str, Any] | None:
         if node is None:
@@ -1534,34 +1548,6 @@ def _normalize_line_filter(value: str | None) -> str | None:
     if line_type not in {"free", "paid"}:
         raise AntProxyError("线路类型只支持 free 或 paid")
     return line_type
-
-
-async def _ping_host(host: str, timeout_ms: int) -> int | None:
-    timeout_seconds = max(1, int((timeout_ms + 999) / 1000))
-    if sys.platform.startswith("win"):
-        command = ["ping", "-n", "1", "-w", str(timeout_ms), host]
-    else:
-        command = ["ping", "-c", "1", "-W", str(timeout_seconds), host]
-
-    started = time.perf_counter()
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds + 2)
-    except Exception:
-        return None
-
-    output = stdout.decode("utf-8", errors="ignore")
-    if process.returncode != 0:
-        return None
-
-    match = re.search(r"(?:time|时间)[=<]\s*(\d+)\s*ms", output, re.IGNORECASE)
-    if match:
-        return int(match.group(1))
-    return max(1, round((time.perf_counter() - started) * 1000))
 
 
 def _evp_bytes_to_key(password: bytes, key_length: int) -> bytes:

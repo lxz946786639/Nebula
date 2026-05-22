@@ -257,6 +257,7 @@ Redis 连接地址不在页面中维护，只能在部署时通过 `REDIS_URL` �
 | `FRONTEND_PORT` / `BACKEND_PORT` | Web 和后端 API 暴露端口 |
 | `SMART_PROXY_PORT_START` / `SMART_PROXY_PORT_END` | 智能代理端口池范围 |
 | `SMART_PROXY_TRAFFIC_GUARD_ENABLED` | 是否启用智能代理流量保护 |
+| `ANT_ADAPTER_BIND_HOST` / `ANT_ADAPTER_CONNECT_HOST` | 蚂蚁节点内部适配器地址，Docker Compose 默认 `0.0.0.0` / `backend` |
 | `ANT_PROXY_AUTO_REFRESH_ENABLED` | 蚂蚁代理账号登录节点是否启用后台自动刷新 |
 | `ANT_PROXY_AUTO_REFRESH_INTERVAL_MINUTES` | 蚂蚁代理账号登录节点后台刷新间隔，默认 `360` 分钟 |
 
@@ -273,11 +274,11 @@ docker compose up -d
 - 登录方式：支持 Ant 账号登录，也支持上传 `ant.db` 文件解析节点。
 - 数据持久化：登录或上传成功后，节点和登录来源会保存到 Nebula 数据库；页面动态状态、在线人数、延迟等会在浏览器标签页内缓存，减少重复刷新。
 - 节点刷新：账号登录方式可手动刷新节点，也可配置后台定时刷新，默认每 6 小时刷新一次；`ant.db` 方式只有重新上传文件时才会更新。
-- 节点分组：页面按「免费专线」和「付费专线」展示 Ant 节点，并可测速。
+- 节点分组：页面按「免费专线」和「付费专线」展示 Ant 节点，并可测速；测速使用 Ant 节点 TCP/TLS/WS 握手，不依赖容器内 `ping`。
 - 智能代理集成：蚂蚁节点不会写入普通「节点管理」节点池，而是在「智能代理」中作为独立数据来源使用。
 - 统一代理出口：对外提供的代理地址由「智能代理」创建，仍使用 Mihomo listener 和 `37890-37900` 端口池；蚂蚁页面只展示已配置的智能代理地址。
 
-在「智能代理」新增代理时，将「数据来源」选择为「蚂蚁节点」后，可以按所有蚂蚁节点或指定节点作为候选，并继续用地区、免费/付费线路、协议类型和调度策略进行筛选。Nebula 会为候选蚂蚁节点启动内部 SOCKS 适配器，Mihomo 通过这些内部上游完成统一调度。
+在「智能代理」新增代理时，将「数据来源」选择为「蚂蚁节点」后，可以按所有蚂蚁节点或指定节点作为候选，并继续用地区、免费/付费线路、协议类型和调度策略进行筛选。Nebula 会为候选蚂蚁节点启动内部 SOCKS 适配器，Mihomo 通过这些内部上游完成统一调度。Docker Compose 部署时，内部适配器默认监听在后端容器的 `0.0.0.0`，Mihomo 通过 `backend` 服务名访问；跨主机或自定义网络部署时，可通过 `ANT_ADAPTER_BIND_HOST` / `ANT_ADAPTER_CONNECT_HOST` 覆盖。
 
 ## 项目结构
 
