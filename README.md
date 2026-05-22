@@ -256,6 +256,7 @@ Redis 连接地址不在页面中维护，只能在部署时通过 `REDIS_URL` �
 | `TZ` | 容器和后端时区，默认 `Asia/Shanghai` |
 | `FRONTEND_PORT` / `BACKEND_PORT` | Web 和后端 API 暴露端口 |
 | `SMART_PROXY_PORT_START` / `SMART_PROXY_PORT_END` | 智能代理端口池范围 |
+| `SMART_PROXY_BIND_HOST` | 智能代理宿主机端口绑定地址，默认 `127.0.0.1`；外部设备访问需改为 `0.0.0.0` |
 | `SMART_PROXY_TRAFFIC_GUARD_ENABLED` | 是否启用智能代理流量保护 |
 | `ANT_ADAPTER_BIND_HOST` / `ANT_ADAPTER_CONNECT_HOST` | 蚂蚁节点内部适配器地址，Docker Compose 默认 `0.0.0.0` / `backend` |
 | `ANT_PROXY_AUTO_REFRESH_ENABLED` | 蚂蚁代理账号登录节点是否启用后台自动刷新 |

@@ -109,6 +109,7 @@ class SmartProxyRuntime(BaseModel):
 class SmartProxyGlobalConfig(BaseModel):
     smart_proxy_port_start: int
     smart_proxy_port_end: int
+    smart_proxy_bind_host: str = "127.0.0.1"
     smart_proxy_auto_apply_interval_minutes: int
     smart_proxy_monitor_interval_minutes: int
     mihomo_runtime_config_path: str

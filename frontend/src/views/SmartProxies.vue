@@ -745,6 +745,9 @@
           <el-tag size="small" effect="plain">自动分配</el-tag>
           <el-tag size="small" effect="plain">端口唯一</el-tag>
           <el-tag size="small" effect="plain">编辑时受限</el-tag>
+          <el-tag size="small" :type="globalConfig.smart_proxy_bind_host === '127.0.0.1' ? 'warning' : 'success'" effect="plain">
+            宿主机绑定 {{ globalConfig.smart_proxy_bind_host || '127.0.0.1' }}
+          </el-tag>
         </div>
       </div>
       <div class="form-grid">
@@ -1313,6 +1316,7 @@ interface DiagnosisDisplayItem {
 interface SmartProxyGlobalConfig {
   smart_proxy_port_start: number
   smart_proxy_port_end: number
+  smart_proxy_bind_host: string
   smart_proxy_auto_apply_interval_minutes: number
   smart_proxy_monitor_interval_minutes: number
   mihomo_runtime_config_path: string
@@ -1474,6 +1478,7 @@ const createModeOptions: Array<{ value: CreationMode; title: string; description
 const globalConfig = reactive<SmartProxyGlobalConfig>({
   smart_proxy_port_start: 37890,
   smart_proxy_port_end: 37900,
+  smart_proxy_bind_host: '127.0.0.1',
   smart_proxy_auto_apply_interval_minutes: 0,
   smart_proxy_monitor_interval_minutes: 1,
   mihomo_runtime_config_path: '',

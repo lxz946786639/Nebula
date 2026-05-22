@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import os
 import random
@@ -1582,6 +1584,176 @@ def _runtime_node_status(runtime_nodes: list[str], online_nodes: int) -> tuple[s
     return "running", None
 
 
+def _loopback_host(value: str | None) -> bool:
+    host = (value or "").strip().lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _smart_proxy_bind_check() -> dict[str, Any]:
+    bind_host = get_settings().SMART_PROXY_BIND_HOST.strip() or "127.0.0.1"
+    if _loopback_host(bind_host):
+        return {
+            "check_type": "host_bind",
+            "status": "warning",
+            "delay": None,
+            "message": f"智能代理宿主机端口当前绑定 {bind_host}，仅 Ubuntu 本机可访问；外部设备请设置 SMART_PROXY_BIND_HOST=0.0.0.0 并重建/重启 mihomo。",
+        }
+    return {
+        "check_type": "host_bind",
+        "status": "ok",
+        "delay": None,
+        "message": f"智能代理宿主机端口绑定 {bind_host}",
+    }
+
+
+def _proxy_credentials(proxy: SmartProxy) -> tuple[str, str] | None:
+    if proxy.username and proxy.password:
+        return proxy.username, proxy.password
+    if proxy.access_token:
+        return "token", proxy.access_token
+    return None
+
+
+async def _read_http_head(reader: asyncio.StreamReader, timeout_seconds: float) -> bytes:
+    data = b""
+    while b"\r\n\r\n" not in data and len(data) < 65536:
+        chunk = await asyncio.wait_for(reader.read(4096), timeout=timeout_seconds)
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
+def _http_status_code(data: bytes) -> int | None:
+    first_line = data.split(b"\r\n", 1)[0].decode("latin1", errors="replace") if data else ""
+    parts = first_line.split()
+    if len(parts) >= 2 and parts[1].isdigit():
+        return int(parts[1])
+    return None
+
+
+def _mihomo_listener_host(api_url: str) -> str:
+    host = (urlsplit(api_url).hostname or "127.0.0.1").strip()
+    if host in {"0.0.0.0", "::"}:
+        return "127.0.0.1"
+    return host
+
+
+async def _probe_http_listener(host: str, port: int, proxy: SmartProxy, timeout_seconds: float) -> tuple[bool, int | None, str | None]:
+    reader: asyncio.StreamReader | None = None
+    writer: asyncio.StreamWriter | None = None
+    started = datetime.now()
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout_seconds)
+        parsed = urlsplit(TEST_URL)
+        target_host = parsed.hostname or "www.gstatic.com"
+        lines = [
+            f"GET {TEST_URL} HTTP/1.1",
+            f"Host: {target_host}",
+            "User-Agent: Nebula-SmartProxy-Probe/1.0",
+            "Connection: close",
+        ]
+        credentials = _proxy_credentials(proxy)
+        if credentials is not None:
+            token = base64.b64encode(f"{credentials[0]}:{credentials[1]}".encode("utf-8")).decode("ascii")
+            lines.append(f"Proxy-Authorization: Basic {token}")
+        writer.write(("\r\n".join(lines) + "\r\n\r\n").encode("utf-8"))
+        await writer.drain()
+        head = await _read_http_head(reader, timeout_seconds)
+        status_code = _http_status_code(head)
+        if status_code is None:
+            return False, None, "Listener did not return an HTTP response"
+        if 200 <= status_code < 400:
+            return True, max(1, round((datetime.now() - started).total_seconds() * 1000)), None
+        return False, None, f"Listener HTTP probe returned {status_code}"
+    except Exception as exc:
+        return False, None, f"Listener HTTP probe failed at {host}:{port}: {exc}"
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
+async def _probe_socks_listener(host: str, port: int, proxy: SmartProxy, timeout_seconds: float) -> tuple[bool, int | None, str | None]:
+    writer: asyncio.StreamWriter | None = None
+    started = datetime.now()
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout_seconds)
+        credentials = _proxy_credentials(proxy)
+        methods = b"\x00\x02" if credentials else b"\x00"
+        writer.write(b"\x05" + bytes([len(methods)]) + methods)
+        await writer.drain()
+        method_response = await asyncio.wait_for(reader.readexactly(2), timeout=timeout_seconds)
+        if method_response[0] != 0x05 or method_response[1] == 0xFF:
+            return False, None, "SOCKS listener rejected authentication methods"
+        if method_response[1] == 0x02:
+            if credentials is None:
+                return False, None, "SOCKS listener requires authentication"
+            username = credentials[0].encode("utf-8")
+            password = credentials[1].encode("utf-8")
+            if len(username) > 255 or len(password) > 255:
+                return False, None, "SOCKS credentials are too long"
+            writer.write(b"\x01" + bytes([len(username)]) + username + bytes([len(password)]) + password)
+            await writer.drain()
+            auth_response = await asyncio.wait_for(reader.readexactly(2), timeout=timeout_seconds)
+            if auth_response != b"\x01\x00":
+                return False, None, "SOCKS listener authentication failed"
+        target = b"www.gstatic.com"
+        writer.write(b"\x05\x01\x00\x03" + bytes([len(target)]) + target + (80).to_bytes(2, "big"))
+        await writer.drain()
+        reply = await asyncio.wait_for(reader.readexactly(4), timeout=timeout_seconds)
+        if reply[1] != 0x00:
+            return False, None, f"SOCKS listener connect failed with code {reply[1]}"
+        if reply[3] == 0x01:
+            await asyncio.wait_for(reader.readexactly(6), timeout=timeout_seconds)
+        elif reply[3] == 0x03:
+            length = (await asyncio.wait_for(reader.readexactly(1), timeout=timeout_seconds))[0]
+            await asyncio.wait_for(reader.readexactly(length + 2), timeout=timeout_seconds)
+        elif reply[3] == 0x04:
+            await asyncio.wait_for(reader.readexactly(18), timeout=timeout_seconds)
+        writer.write(b"GET /generate_204 HTTP/1.1\r\nHost: www.gstatic.com\r\nConnection: close\r\n\r\n")
+        await writer.drain()
+        head = await _read_http_head(reader, timeout_seconds)
+        status_code = _http_status_code(head)
+        if status_code is None:
+            return False, None, "SOCKS listener did not return target HTTP response"
+        if 200 <= status_code < 400:
+            return True, max(1, round((datetime.now() - started).total_seconds() * 1000)), None
+        return False, None, f"SOCKS listener target probe returned {status_code}"
+    except Exception as exc:
+        return False, None, f"SOCKS listener probe failed at {host}:{port}: {exc}"
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
+async def smart_proxy_listener_probe(
+    session: AsyncSession,
+    proxy: SmartProxy,
+    *,
+    timeout_ms: int = 8000,
+) -> tuple[str, int | None, str | None]:
+    timeout_seconds = max(1.0, timeout_ms / 1000)
+    host = _mihomo_listener_host(await get_mihomo_api_url(session))
+    if proxy.proxy_type in {"http", "mixed"}:
+        ok, delay, error = await _probe_http_listener(host, proxy.port, proxy, timeout_seconds)
+    else:
+        ok, delay, error = await _probe_socks_listener(host, proxy.port, proxy, timeout_seconds)
+    return ("ok" if ok else "failed"), delay, error
+
+
 def _empty_connection_stats(proxy_id: int) -> dict[str, Any]:
     return {
         "active_connections": 0,
@@ -2040,6 +2212,44 @@ async def check_smart_proxy_health(
             ],
             "error": None if online_count else health_error or "All candidate nodes timed out",
         }
+    )
+
+    listener_status, listener_delay, listener_error = await smart_proxy_listener_probe(session, proxy, timeout_ms=timeout_ms)
+    result["checks"].append(
+        {
+            "check_type": "listener",
+            "status": listener_status,
+            "delay": listener_delay,
+            "message": listener_error,
+        }
+    )
+    session.add(
+        SmartProxyHealthLog(
+            smart_proxy_id=proxy.id,
+            node_id=None,
+            node_name=None,
+            check_type="listener",
+            status=listener_status,
+            latency=listener_delay,
+            message=listener_error,
+        )
+    )
+    if listener_status != "ok":
+        result["status"] = "proxy_unavailable"
+        result["error"] = listener_error or "Mihomo listener is unavailable"
+
+    host_bind_check = _smart_proxy_bind_check()
+    result["checks"].append(host_bind_check)
+    session.add(
+        SmartProxyHealthLog(
+            smart_proxy_id=proxy.id,
+            node_id=None,
+            node_name=None,
+            check_type=str(host_bind_check["check_type"]),
+            status=str(host_bind_check["status"]),
+            latency=None,
+            message=str(host_bind_check["message"]) if host_bind_check.get("message") else None,
+        )
     )
 
     if include_scenario_checks and proxy.scenario in SCENARIO_CHECKS:

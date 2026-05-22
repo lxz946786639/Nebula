@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.core.config import get_settings
 from app.core.timezone import as_china, now_china
 from app.models.node import Node
 from app.models.smart_proxy import SmartProxy
@@ -404,9 +405,11 @@ def _bool_text(value: bool) -> str:
 async def _global_config(session: SessionDep) -> SmartProxyGlobalConfig:
     port_start, port_end = await get_smart_proxy_port_range(session)
     policy = await smart_proxy_traffic_policy(session)
+    settings = get_settings()
     return SmartProxyGlobalConfig(
         smart_proxy_port_start=port_start,
         smart_proxy_port_end=port_end,
+        smart_proxy_bind_host=settings.SMART_PROXY_BIND_HOST.strip() or "127.0.0.1",
         smart_proxy_auto_apply_interval_minutes=await get_smart_proxy_auto_apply_interval_minutes(session),
         smart_proxy_monitor_interval_minutes=await get_smart_proxy_monitor_interval_minutes(session),
         mihomo_runtime_config_path=await get_mihomo_runtime_config_path(session),
