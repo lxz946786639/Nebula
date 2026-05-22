@@ -42,6 +42,7 @@ from app.services.settings import (
     get_smart_proxy_expire_soon_days,
     get_smart_proxy_low_remaining_mb,
     get_smart_proxy_min_remaining_mb,
+    get_smart_proxy_monitor_interval_minutes,
     get_smart_proxy_port_range,
     get_smart_proxy_traffic_guard_enabled,
     public_host_port_from_base_url,
@@ -60,6 +61,7 @@ SCENARIO_CHECKS = {
 RUNTIME_NODE_ID_RE = re.compile(r"^node-(\d+)\b")
 TRAFFIC_RUNTIME_RELOAD_COOLDOWN = timedelta(minutes=5)
 CORE_TRAFFIC_STATE_KEY = "mihomo_core_traffic_state"
+SMART_PROXY_MONITOR_LAST_SYNC_KEY = "smart_proxy_monitor_last_sync_at"
 _core_traffic_sample: tuple[datetime, int, int] | None = None
 _proxy_traffic_samples: dict[int, tuple[datetime, int, int]] = {}
 _last_traffic_runtime_reload_at: datetime | None = None
@@ -225,6 +227,22 @@ def runtime_node_id(name: str) -> int | None:
 
 def smart_proxy_stability_priority_enabled(proxy: SmartProxy) -> bool:
     return bool(proxy.strategy == "stable" or (proxy.stability_priority and proxy.strategy in {"select", "fallback"}))
+
+
+def stable_priority_failover_target(
+    proxy: SmartProxy,
+    current_node: Any,
+    online_nodes: list[str],
+) -> str | None:
+    if not proxy.enabled or not smart_proxy_stability_priority_enabled(proxy):
+        return None
+    current = str(current_node or "").strip()
+    if not current:
+        return None
+    online = [str(item).strip() for item in online_nodes if str(item).strip()]
+    if current in online:
+        return None
+    return online[0] if online else None
 
 
 def _prioritize_stable_current_node(nodes: list[Node], proxy: SmartProxy) -> list[Node]:
@@ -1603,12 +1621,15 @@ def _latest_history_delay(proxy_data: dict[str, Any] | None) -> int | None:
 
 def _delay_summary(runtime_nodes: list[str], proxies: dict[str, Any]) -> dict[str, Any]:
     delays: list[tuple[str, int]] = []
+    online_node_names: list[str] = []
     online_nodes = 0
     for name in runtime_nodes:
         item = proxies.get(name)
         delay = _latest_history_delay(item if isinstance(item, dict) else None)
-        if isinstance(item, dict) and (item.get("alive") is True or (item.get("alive") is None and delay is not None)):
+        online = isinstance(item, dict) and (item.get("alive") is True or (item.get("alive") is None and delay is not None))
+        if online:
             online_nodes += 1
+            online_node_names.append(name)
         if delay is not None:
             delays.append((name, delay))
     best = min(delays, key=lambda item: item[1]) if delays else None
@@ -1616,8 +1637,9 @@ def _delay_summary(runtime_nodes: list[str], proxies: dict[str, Any]) -> dict[st
         "online_nodes": online_nodes,
         "failed_nodes": max(len(runtime_nodes) - online_nodes, 0),
         "average_delay": round(sum(delay for _, delay in delays) / len(delays)) if delays else None,
-        "best_node": best[0] if best else None,
+        "best_node": best[0] if best else (online_node_names[0] if online_node_names else None),
         "delay": best[1] if best else None,
+        "online_node_names": online_node_names,
     }
 
 
@@ -1964,6 +1986,107 @@ def add_smart_proxy_switch_log(
     return changed
 
 
+def _parse_monitor_sync_at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return as_china(datetime.fromisoformat(value))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _monitor_sync_setting(session: AsyncSession) -> SystemSetting | None:
+    return await session.scalar(select(SystemSetting).where(SystemSetting.key == SMART_PROXY_MONITOR_LAST_SYNC_KEY))
+
+
+async def _write_monitor_sync_at(session: AsyncSession, synced_at: datetime) -> None:
+    item = await _monitor_sync_setting(session)
+    value = synced_at.isoformat()
+    if item is None:
+        session.add(
+            SystemSetting(
+                key=SMART_PROXY_MONITOR_LAST_SYNC_KEY,
+                value=value,
+                secret=False,
+                description="Last time Nebula synced smart proxy runtime state from Mihomo",
+            )
+        )
+    else:
+        item.value = value
+
+
+def _monitor_state_payload(
+    *,
+    interval_minutes: int,
+    last_sync_at: datetime | None,
+    now: datetime | None = None,
+    skipped: bool | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    next_sync_at = None
+    if interval_minutes > 0 and last_sync_at is not None:
+        next_sync_at = last_sync_at + timedelta(minutes=interval_minutes)
+    current = now or now_china()
+    return {
+        "enabled": interval_minutes > 0,
+        "interval_minutes": interval_minutes,
+        "last_sync_at": last_sync_at,
+        "next_sync_at": next_sync_at,
+        "due": interval_minutes > 0 and (last_sync_at is None or (next_sync_at is not None and current >= next_sync_at)),
+        "skipped": skipped,
+        "reason": reason,
+    }
+
+
+async def smart_proxy_monitor_state(session: AsyncSession) -> dict[str, Any]:
+    interval_minutes = await get_smart_proxy_monitor_interval_minutes(session)
+    item = await _monitor_sync_setting(session)
+    return _monitor_state_payload(
+        interval_minutes=interval_minutes,
+        last_sync_at=_parse_monitor_sync_at(item.value if item else None),
+    )
+
+
+async def refresh_smart_proxy_statuses_if_due(session: AsyncSession, *, force: bool = False) -> dict[str, Any]:
+    async with exclusive_lock("smart_proxy_monitor"):
+        interval_minutes = await get_smart_proxy_monitor_interval_minutes(session)
+        item = await _monitor_sync_setting(session)
+        last_sync_at = _parse_monitor_sync_at(item.value if item else None)
+        now = now_china()
+        state = _monitor_state_payload(interval_minutes=interval_minutes, last_sync_at=last_sync_at, now=now)
+        if interval_minutes <= 0 and not force:
+            return {
+                **state,
+                "skipped": True,
+                "reason": "disabled",
+                "proxies": 0,
+                "status_changes": 0,
+                "current_node_changes": 0,
+                "closed_connections": 0,
+            }
+        if not force and not state["due"]:
+            return {
+                **state,
+                "skipped": True,
+                "reason": "not_due",
+                "proxies": 0,
+                "status_changes": 0,
+                "current_node_changes": 0,
+                "closed_connections": 0,
+            }
+
+        summary = await refresh_smart_proxy_statuses(session)
+        synced_at = now_china()
+        await _write_monitor_sync_at(session, synced_at)
+        await session.commit()
+        return {
+            **summary,
+            **_monitor_state_payload(interval_minutes=interval_minutes, last_sync_at=synced_at, now=synced_at),
+            "skipped": False,
+            "reason": "forced" if force else "due",
+        }
+
+
 async def smart_proxy_runtime_status(session: AsyncSession, proxy: SmartProxy, *, run_delay: bool = False) -> dict[str, Any]:
     core = await mihomo_core_status(session)
     group_name = runtime_group_name(proxy)
@@ -2081,7 +2204,16 @@ async def smart_proxy_runtime_status(session: AsyncSession, proxy: SmartProxy, *
                 summary["average_delay"] = delay
                 summary["best_node"] = current_node
                 summary["delay"] = delay
+                summary["online_node_names"] = [current_node]
         runtime_status, runtime_error = _runtime_node_status(runtime_nodes, summary["online_nodes"])
+        stable_failover_node = stable_priority_failover_target(
+            proxy,
+            group.get("now"),
+            summary["online_node_names"],
+        )
+        if stable_failover_node:
+            runtime_status = "degraded"
+            runtime_error = "Stable current node is unavailable; failover pending"
         return {
             "proxy_id": proxy.id,
             "name": proxy.name,
@@ -2100,6 +2232,7 @@ async def smart_proxy_runtime_status(session: AsyncSession, proxy: SmartProxy, *
             "delay": delay or summary["delay"],
             "history": group.get("history") if isinstance(group.get("history"), list) else [],
             "error": runtime_error,
+            "stable_failover_node": stable_failover_node,
             **stats_payload,
             **traffic_payload,
         }
@@ -2286,6 +2419,57 @@ async def check_smart_proxy_health(
     )
     result["checks"].append(delay_check)
 
+    stable_failover_node = stable_priority_failover_target(
+        proxy,
+        result.get("current_node"),
+        [name for name, _ in online_delays],
+    )
+    if stable_failover_node:
+        failover_changed = add_smart_proxy_switch_log(
+            session,
+            proxy,
+            stable_failover_node,
+            reason="稳定优先健康检测发现当前节点不可用，切换到可用节点",
+        )
+        result["current_node"] = stable_failover_node
+        target_node_id = runtime_node_id(stable_failover_node)
+        for item in health_nodes:
+            item["current"] = (
+                item.get("node_id") == target_node_id
+                if target_node_id is not None
+                else item.get("name") == stable_failover_node
+            )
+        await session.commit()
+        apply_result = await apply_stability_priority_runtime(session, [proxy]) if failover_changed else None
+        failover_status = "failed" if apply_result and apply_result.error else "ok"
+        failover_message = (
+            apply_result.error
+            if apply_result and apply_result.error
+            else f"当前节点不可用，已切换到 {stable_failover_node}"
+        )
+        result["checks"].append(
+            {
+                "check_type": "stable_failover",
+                "status": failover_status,
+                "delay": None,
+                "message": failover_message,
+            }
+        )
+        session.add(
+            SmartProxyHealthLog(
+                smart_proxy_id=proxy.id,
+                node_id=target_node_id,
+                node_name=stable_failover_node,
+                check_type="stable_failover",
+                status=failover_status,
+                latency=None,
+                message=failover_message,
+            )
+        )
+        if failover_status == "failed":
+            result["status"] = "degraded"
+            result["error"] = failover_message
+
     listener_status, listener_delay, listener_error = await smart_proxy_listener_probe(session, proxy, timeout_ms=timeout_ms)
     result["checks"].append(
         {
@@ -2388,12 +2572,18 @@ async def refresh_smart_proxy_statuses(session: AsyncSession) -> dict[str, Any]:
     for proxy in proxies:
         previous_status = proxy.status
         previous_error = proxy.last_error
-        status = await smart_proxy_runtime_status(session, proxy)
+        status = await smart_proxy_runtime_status(session, proxy, run_delay=smart_proxy_stability_priority_enabled(proxy))
         proxy.status = status["status"]
         proxy.last_error = status["error"]
         if previous_status != proxy.status or previous_error != proxy.last_error:
             status_changes += 1
-        changed = add_smart_proxy_switch_log(session, proxy, status.get("current_node"), reason="运行状态监控发现当前节点变化")
+        failover_node = status.get("stable_failover_node")
+        changed = add_smart_proxy_switch_log(
+            session,
+            proxy,
+            failover_node or status.get("current_node"),
+            reason="稳定优先检测到当前节点不可用，切换到可用节点" if failover_node else "运行状态监控发现当前节点变化",
+        )
         if changed:
             current_node_changes += 1
         if changed and smart_proxy_stability_priority_enabled(proxy):

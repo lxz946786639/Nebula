@@ -35,6 +35,11 @@
       <el-descriptions-item label="上传">{{ formatBytes(coreStatus.upload_total) }}</el-descriptions-item>
       <el-descriptions-item label="下载">{{ formatBytes(coreStatus.download_total) }}</el-descriptions-item>
       <el-descriptions-item label="内存">{{ coreStatus.memory ? formatBytes(coreStatus.memory) : '-' }}</el-descriptions-item>
+      <el-descriptions-item label="状态同步">
+        <el-tooltip :content="monitorStateTitle" placement="top">
+          <el-tag :type="monitorStateTag" effect="plain">{{ monitorStateLabel }}</el-tag>
+        </el-tooltip>
+      </el-descriptions-item>
       <el-descriptions-item label="API">{{ coreStatus.api_url || '-' }}</el-descriptions-item>
     </el-descriptions>
     <div class="mobile-summary-grid">
@@ -53,6 +58,10 @@
       <div class="mobile-summary-item">
         <span>下载</span>
         <strong>{{ formatRate(coreStatus.download_speed) }}</strong>
+      </div>
+      <div class="mobile-summary-item">
+        <span>同步</span>
+        <strong>{{ monitorStateLabel }}</strong>
       </div>
     </div>
     <div class="table-wrap has-cards desktop-table">
@@ -100,6 +109,9 @@
         <template #default="{ row }">
           <div class="current-node-cell">
             <span>{{ row.current_node || '-' }}</span>
+            <el-tooltip v-if="row.state_synced === false" :content="`Mihomo 当前节点：${row.mihomo_current_node || '-'}`" placement="top">
+              <el-tag size="small" type="warning" effect="plain">待同步</el-tag>
+            </el-tooltip>
             <el-button link type="primary" title="查看节点调试历史" @click="showSwitchLogs(row)">
               节点调试历史（{{ row.switch_count }}）
             </el-button>
@@ -198,6 +210,7 @@
           <div class="smart-proxy-mobile-current-copy">
             <span>当前节点</span>
             <strong>{{ row.current_node || '-' }}</strong>
+            <el-tag v-if="row.state_synced === false" size="small" type="warning" effect="plain">待同步</el-tag>
           </div>
           <el-button link type="primary" title="查看节点调试历史" @click="showSwitchLogs(row)">
             节点调试历史（{{ row.switch_count }}）
@@ -776,7 +789,31 @@
           </template>
           <el-input-number v-model="globalConfig.smart_proxy_auto_apply_interval_minutes" :min="0" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="监控频率（分钟）">
+        <el-form-item>
+          <template #label>
+            <span class="label-with-help">
+              监控频率（分钟）
+              <el-popover placement="top" trigger="hover" width="360">
+                <template #reference>
+                  <span class="help-icon" title="查看监控频率说明">?</span>
+                </template>
+                <div class="strategy-help">
+                  <div class="strategy-help-item">
+                    <strong>同步内容</strong>
+                    <span>按此频率从 Mihomo 读取每个智能代理的运行状态和当前节点，并回写到 Nebula。</span>
+                  </div>
+                  <div class="strategy-help-item">
+                    <strong>稳定优先</strong>
+                    <span>如果 Mihomo 已切到可用节点，Nebula 会把新节点固化为主节点，后续重载不会切回旧节点。</span>
+                  </div>
+                  <div class="strategy-help-item">
+                    <strong>关闭同步</strong>
+                    <span>填 0 表示关闭自动同步；手动诊断仍会立即读取并同步当前代理。</span>
+                  </div>
+                </div>
+              </el-popover>
+            </span>
+          </template>
           <el-input-number v-model="globalConfig.smart_proxy_monitor_interval_minutes" :min="0" style="width: 100%" />
         </el-form-item>
       </div>
@@ -1124,6 +1161,8 @@ interface SmartProxy {
   status: string
   last_error?: string | null
   current_node?: string | null
+  mihomo_current_node?: string | null
+  state_synced?: boolean
   switch_count: number
   last_applied_at?: string | null
   config_updated_at?: string | null
@@ -1222,6 +1261,8 @@ interface SmartProxyStatus {
   core_available: boolean
   status: string
   current_node?: string | null
+  mihomo_current_node?: string | null
+  state_synced?: boolean
   candidate_nodes: number
   runtime_nodes: number
   online_nodes: number
@@ -1245,6 +1286,20 @@ interface SmartProxyStatus {
   traffic_reasons: string[]
   delay?: number | null
   error?: string | null
+}
+
+interface SmartProxyMonitorState {
+  enabled: boolean
+  interval_minutes: number
+  last_sync_at?: string | null
+  next_sync_at?: string | null
+  due?: boolean
+  skipped?: boolean | null
+  reason?: string | null
+  proxies?: number
+  status_changes?: number
+  current_node_changes?: number
+  closed_connections?: number
 }
 
 interface SmartProxyNodeHealth {
@@ -1317,6 +1372,7 @@ interface SmartProxyGlobalConfig {
   smart_proxy_bind_host: string
   smart_proxy_auto_apply_interval_minutes: number
   smart_proxy_monitor_interval_minutes: number
+  smart_proxy_monitor_state?: SmartProxyMonitorState
   mihomo_runtime_config_path: string
   mihomo_core_config_path: string
   traffic_guard_enabled: boolean
@@ -1355,6 +1411,19 @@ const coreStatus = reactive<MihomoCoreStatus>({
   upload_speed: 0,
   memory: null,
   error: null,
+})
+const monitorState = reactive<SmartProxyMonitorState>({
+  enabled: false,
+  interval_minutes: 0,
+  last_sync_at: null,
+  next_sync_at: null,
+  due: false,
+  skipped: null,
+  reason: null,
+  proxies: 0,
+  status_changes: 0,
+  current_node_changes: 0,
+  closed_connections: 0,
 })
 const loading = ref(false)
 const reloading = ref(false)
@@ -1479,6 +1548,7 @@ const globalConfig = reactive<SmartProxyGlobalConfig>({
   smart_proxy_bind_host: '127.0.0.1',
   smart_proxy_auto_apply_interval_minutes: 0,
   smart_proxy_monitor_interval_minutes: 1,
+  smart_proxy_monitor_state: undefined,
   mihomo_runtime_config_path: '',
   mihomo_core_config_path: '',
   traffic_guard_enabled: true,
@@ -1838,6 +1908,45 @@ function coreStatusText(available: boolean) {
   return available ? '可用' : '不可用'
 }
 
+function applyMonitorState(data?: SmartProxyMonitorState | null) {
+  if (!data) return
+  Object.assign(monitorState, {
+    enabled: Boolean(data.enabled),
+    interval_minutes: Number(data.interval_minutes || 0),
+    last_sync_at: data.last_sync_at || null,
+    next_sync_at: data.next_sync_at || null,
+    due: Boolean(data.due),
+    skipped: data.skipped ?? null,
+    reason: data.reason || null,
+    proxies: Number(data.proxies || 0),
+    status_changes: Number(data.status_changes || 0),
+    current_node_changes: Number(data.current_node_changes || 0),
+    closed_connections: Number(data.closed_connections || 0),
+  })
+}
+
+const monitorStateLabel = computed(() => {
+  if (!monitorState.enabled) return '已关闭'
+  if (!monitorState.last_sync_at) return `待首次同步 / ${monitorState.interval_minutes} 分钟`
+  return `每 ${monitorState.interval_minutes} 分钟`
+})
+
+const monitorStateTag = computed(() => {
+  if (!monitorState.enabled) return 'info'
+  if (monitorState.due) return 'warning'
+  return 'success'
+})
+
+const monitorStateTitle = computed(() => {
+  if (!monitorState.enabled) return '自动同步已关闭；手动诊断仍会读取并同步当前代理。'
+  const last = monitorState.last_sync_at ? formatDateTime(monitorState.last_sync_at) : '尚未同步'
+  const next = monitorState.next_sync_at ? formatDateTime(monitorState.next_sync_at) : '等待下一次调度'
+  const changes = monitorState.skipped
+    ? '本次未到同步时间'
+    : `状态变化 ${monitorState.status_changes || 0} 个，当前节点变化 ${monitorState.current_node_changes || 0} 个`
+  return `Nebula 按监控频率从 Mihomo 回写运行状态和当前节点。最近同步：${last}；下次同步：${next}；${changes}。`
+})
+
 function readableStatusText(value?: string | null) {
   const labels: Record<string, string> = {
     ok: '正常',
@@ -1859,6 +1968,10 @@ function readableStatusText(value?: string | null) {
 function checkTypeText(value?: string | null) {
   const labels: Record<string, string> = {
     delay: '延迟检测',
+    stable_failover: '稳定切换',
+    listener: '代理入口',
+    runtime_apply: '运行时应用',
+    host_bind: '监听绑定',
     chatgpt: 'ChatGPT',
     netflix: 'Netflix',
   }
@@ -1877,6 +1990,8 @@ function statusMessageText(value?: string | null) {
     'Mihomo returned an unexpected delay payload': 'Mihomo 返回了无法识别的延迟数据',
     'No runtime nodes in Mihomo group': 'Mihomo 策略组中没有运行节点',
     'All proxy nodes are unavailable': '代理下所有节点当前不可用',
+    'Stable current node is unavailable; failover pending': '稳定优先当前节点不可用，等待切换到可用节点',
+    'Mihomo listener is unavailable': 'Mihomo 代理入口不可用',
     'No candidate nodes matched this smart proxy': '没有匹配到候选节点',
     'No traffic snapshot found; traffic scheduling skipped': '暂无流量快照，已跳过流量调度',
   }
@@ -2213,7 +2328,7 @@ async function refreshCoreStatus() {
 async function refreshProxyStatuses() {
   if (!items.value.length) return
   const results = await Promise.allSettled(
-    items.value.map((item) => http.get(`/smart-proxies/${item.id}/status`, { params: { delay: false } })),
+    items.value.map((item) => http.get(`/smart-proxies/${item.id}/status`, { params: { delay: false, sync: false } })),
   )
   results.forEach((result) => {
     if (result.status !== 'fulfilled') return
@@ -2230,15 +2345,19 @@ function applySmartProxyStatus(data: SmartProxyStatus) {
   const target = items.value.find((item) => item.id === data.proxy_id)
   if (!target) return
   target.status = data.status
+  target.last_error = data.error
   target.current_node = data.current_node
+  target.mihomo_current_node = data.mihomo_current_node
+  target.state_synced = data.state_synced
   target.switch_count = data.switch_count
   target.candidate_nodes = data.candidate_nodes
 }
 
 const { connect: connectStatusSocket, stop: stopStatusSocket } = useStatusSocket((message) => {
-  const payload = message.smart_proxies as { core?: MihomoCoreStatus; proxies?: SmartProxyStatus[] } | undefined
+  const payload = message.smart_proxies as { core?: MihomoCoreStatus; proxies?: SmartProxyStatus[]; monitor?: SmartProxyMonitorState } | undefined
   if (!payload) return
   if (payload.core) Object.assign(coreStatus, payload.core)
+  applyMonitorState(payload.monitor)
   if (Array.isArray(payload.proxies)) {
     payload.proxies.forEach(applySmartProxyStatus)
   }
@@ -2254,6 +2373,7 @@ async function loadMetadata(force = false) {
 async function loadGlobalConfig() {
   const { data } = await http.get('/smart-proxies/config/global')
   Object.assign(globalConfig, data)
+  applyMonitorState(data.smart_proxy_monitor_state)
   return data as SmartProxyGlobalConfig
 }
 
@@ -2796,12 +2916,15 @@ async function saveGlobalConfig() {
 }
 
 async function loadProxyStatus(row: SmartProxy) {
-  const { data } = await http.get(`/smart-proxies/${row.id}/status`, { params: { delay: true } })
+  const { data } = await http.get(`/smart-proxies/${row.id}/status`, { params: { delay: true, sync: true } })
   selectedStatus.value = data
   const target = items.value.find((item) => item.id === row.id)
   if (target) {
     target.status = data.status
+    target.last_error = data.error
     target.current_node = data.current_node
+    target.mihomo_current_node = data.mihomo_current_node
+    target.state_synced = data.state_synced
     target.switch_count = data.switch_count
     target.candidate_nodes = data.candidate_nodes
   }

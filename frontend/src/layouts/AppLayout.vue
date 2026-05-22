@@ -6,7 +6,7 @@
         <div class="brand-mark">N</div>
         <div>
           <strong>Nebula</strong>
-          <span>Sub Hub</span>
+          <span>星云订阅</span>
         </div>
         <el-button class="drawer-close" :icon="Close" circle title="关闭导航" aria-label="关闭导航" @click="closeMobileNav" />
       </div>
@@ -72,7 +72,7 @@
         </div>
         <div class="topbar-actions">
           <PwaInstallButton placement="bottom" />
-          <ThemeToggle placement="bottom" label="主题" />
+          <ThemeToggle placement="bottom" />
           <div class="ws-status" :class="`is-${socketStatus}`" :title="socketTitle">
             <span class="ws-status-dot"></span>
             <span>{{ socketLabel }}</span>

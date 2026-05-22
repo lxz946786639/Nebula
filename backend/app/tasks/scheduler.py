@@ -13,14 +13,13 @@ from app.services.settings import (
     get_ant_proxy_auto_refresh_enabled,
     get_ant_proxy_auto_refresh_interval_minutes,
     get_smart_proxy_auto_apply_interval_minutes,
-    get_smart_proxy_monitor_interval_minutes,
     get_traffic_poll_interval_minutes,
 )
 from app.services.ant_proxy import AntProxyError, ant_proxy_service
 from app.services.smart_proxy import (
     apply_mihomo_runtime_if_changed,
     reconcile_smart_proxy_runtime_after_traffic_change,
-    refresh_smart_proxy_statuses,
+    refresh_smart_proxy_statuses_if_due,
 )
 from app.services.traffic import latest_traffic_snapshot, poll_traffic_snapshot
 
@@ -29,7 +28,6 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=CHINA_TZ)
 last_ant_proxy_refresh_attempt_at: datetime | None = None
 last_smart_proxy_apply_at: datetime | None = None
-last_smart_proxy_monitor_at: datetime | None = None
 
 
 def _as_china(value: datetime) -> datetime:
@@ -160,6 +158,14 @@ async def refresh_ant_proxy_by_setting() -> None:
             logger.info("Scheduled Ant proxy refresh skipped: %s", exc)
 
 
+async def persist_ant_proxy_traffic() -> None:
+    async with AsyncSessionLocal() as session:
+        try:
+            await ant_proxy_service.persist_traffic_totals(session)
+        except Exception as exc:
+            logger.info("Scheduled Ant proxy traffic persistence skipped: %s", exc)
+
+
 async def apply_smart_proxy_by_setting() -> None:
     global last_smart_proxy_apply_at
     async with AsyncSessionLocal() as session:
@@ -192,16 +198,11 @@ async def apply_smart_proxy_by_setting() -> None:
 
 
 async def monitor_smart_proxy_by_setting() -> None:
-    global last_smart_proxy_monitor_at
     async with AsyncSessionLocal() as session:
-        interval_minutes = await get_smart_proxy_monitor_interval_minutes(session)
-        if interval_minutes <= 0:
-            return
-        now = now_china()
-        if last_smart_proxy_monitor_at and now - last_smart_proxy_monitor_at < timedelta(minutes=interval_minutes):
-            return
         try:
-            summary = await refresh_smart_proxy_statuses(session)
+            summary = await refresh_smart_proxy_statuses_if_due(session)
+            if summary.get("skipped"):
+                return
             if (
                 summary.get("status_changes", 0)
                 or summary.get("current_node_changes", 0)
@@ -220,7 +221,6 @@ async def monitor_smart_proxy_by_setting() -> None:
                     ),
                 )
                 await session.commit()
-            last_smart_proxy_monitor_at = now
         except Exception as exc:
             logger.info("Scheduled smart proxy monitor skipped: %s", exc)
 
@@ -230,6 +230,7 @@ async def maintenance_tick() -> None:
         refresh_enabled_subscriptions,
         poll_traffic_by_setting,
         refresh_ant_proxy_by_setting,
+        persist_ant_proxy_traffic,
         apply_smart_proxy_by_setting,
         monitor_smart_proxy_by_setting,
     )

@@ -25,7 +25,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import BACKEND_DIR, get_settings
+from app.core.locks import exclusive_lock
 from app.models.ant_proxy_state import AntProxyState
+from app.models.system_setting import SystemSetting
 
 try:
     from cryptography.hazmat.decrepit.ciphers import modes as decrepit_modes
@@ -55,6 +57,8 @@ ANT_API_APP_TYPE = "local"
 ANT_PROXY_STATE_VERSION = 1
 ANT_PROXY_STATE_ALGORITHM = "aes-256-cfb+hmac-sha256+msgpack"
 ANT_PROXY_STATE_NAME = "default"
+ANT_PROXY_TRAFFIC_STATE_KEY = "ant_proxy_traffic_state"
+ANT_PROXY_TRAFFIC_STATE_DESCRIPTION = "Persisted Ant proxy adapter traffic totals"
 ANT_PROXY_DYNAMIC_DATA_KEYS = {
     "connections",
     "connection",
@@ -180,6 +184,8 @@ class AntProxyService:
         self.total_connections = 0
         self.upload_bytes = 0
         self.download_bytes = 0
+        self._raw_upload_bytes = 0
+        self._raw_download_bytes = 0
 
     @property
     def running(self) -> bool:
@@ -393,7 +399,71 @@ class AntProxyService:
             "last_error": self.last_error,
         }
 
+    async def load_traffic_totals(self, session: AsyncSession) -> tuple[int, int]:
+        item = await _ant_proxy_traffic_setting(session)
+        state = _parse_traffic_state(item.value if item is not None else None)
+        self.upload_bytes = _safe_int(state.get("upload_total"))
+        self.download_bytes = _safe_int(state.get("download_total"))
+        return self.upload_bytes, self.download_bytes
+
+    async def persist_traffic_totals(self, session: AsyncSession) -> tuple[int, int]:
+        async with exclusive_lock(ANT_PROXY_TRAFFIC_STATE_KEY):
+            raw_upload_total = max(int(self._raw_upload_bytes or 0), 0)
+            raw_download_total = max(int(self._raw_download_bytes or 0), 0)
+            item = await _ant_proxy_traffic_setting(session)
+            state = _parse_traffic_state(item.value if item is not None else None)
+            previous_raw_upload = _safe_int(state.get("raw_upload_total"))
+            previous_raw_download = _safe_int(state.get("raw_download_total"))
+            upload_total = _safe_int(state.get("upload_total"))
+            download_total = _safe_int(state.get("download_total"))
+
+            if not state:
+                upload_total = raw_upload_total
+                download_total = raw_download_total
+            else:
+                upload_delta = raw_upload_total - previous_raw_upload
+                download_delta = raw_download_total - previous_raw_download
+                upload_total += raw_upload_total if upload_delta < 0 else max(upload_delta, 0)
+                download_total += raw_download_total if download_delta < 0 else max(download_delta, 0)
+
+            if (
+                item is not None
+                and previous_raw_upload == raw_upload_total
+                and previous_raw_download == raw_download_total
+                and _safe_int(state.get("upload_total")) == upload_total
+                and _safe_int(state.get("download_total")) == download_total
+            ):
+                self.upload_bytes = upload_total
+                self.download_bytes = download_total
+                return upload_total, download_total
+
+            payload = {
+                "upload_total": upload_total,
+                "download_total": download_total,
+                "raw_upload_total": raw_upload_total,
+                "raw_download_total": raw_download_total,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            value = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            if item is None:
+                session.add(
+                    SystemSetting(
+                        key=ANT_PROXY_TRAFFIC_STATE_KEY,
+                        value=value,
+                        secret=False,
+                        description=ANT_PROXY_TRAFFIC_STATE_DESCRIPTION,
+                    )
+                )
+            elif item.value != value:
+                item.value = value
+                item.description = ANT_PROXY_TRAFFIC_STATE_DESCRIPTION
+            await session.commit()
+            self.upload_bytes = upload_total
+            self.download_bytes = download_total
+            return upload_total, download_total
+
     async def restore(self, session: AsyncSession) -> bool:
+        await self.load_traffic_totals(session)
         row = await session.scalar(select(AntProxyState).where(AntProxyState.name == ANT_PROXY_STATE_NAME))
         if row is not None and row.encrypted_payload:
             try:
@@ -912,7 +982,9 @@ class AntProxyService:
             chunk = await reader.read(65536)
             if not chunk:
                 return
-            self.upload_bytes += len(chunk)
+            size = len(chunk)
+            self._raw_upload_bytes += size
+            self.upload_bytes += size
             writer.write(crypto.encrypt(chunk))
             await writer.drain()
 
@@ -926,7 +998,9 @@ class AntProxyService:
         if initial:
             plain = crypto.decrypt(initial)
             if plain:
-                self.download_bytes += len(plain)
+                size = len(plain)
+                self._raw_download_bytes += size
+                self.download_bytes += size
                 writer.write(plain)
                 await writer.drain()
         while True:
@@ -936,7 +1010,9 @@ class AntProxyService:
             plain = crypto.decrypt(chunk)
             if not plain:
                 continue
-            self.download_bytes += len(plain)
+            size = len(plain)
+            self._raw_download_bytes += size
+            self.download_bytes += size
             writer.write(plain)
             await writer.drain()
 
@@ -1517,6 +1593,20 @@ def _safe_int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _parse_traffic_state(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def _ant_proxy_traffic_setting(session: AsyncSession) -> SystemSetting | None:
+    return await session.scalar(select(SystemSetting).where(SystemSetting.key == ANT_PROXY_TRAFFIC_STATE_KEY))
 
 
 def _optional_int(value: Any) -> int | None:

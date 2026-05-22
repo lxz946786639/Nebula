@@ -15,9 +15,8 @@ from app.models.subscription import Subscription
 from app.models.user import User
 from app.services.settings import get_proxy_public_base_url, get_subconverter_url, get_subscription_public_base_url, get_subscription_token
 from app.services.smart_proxy import (
-    add_smart_proxy_switch_log,
-    apply_stability_priority_runtime,
     mihomo_core_status,
+    refresh_smart_proxy_statuses_if_due,
     smart_proxy_runtime_status,
 )
 from app.services.subconverter import SubconverterClient
@@ -124,24 +123,18 @@ async def _dashboard_payload() -> dict[str, Any]:
 
 async def _smart_proxies_payload() -> dict[str, Any]:
     async with AsyncSessionLocal() as session:
+        monitor = await refresh_smart_proxy_statuses_if_due(session)
         core = await mihomo_core_status(session)
         proxies = list((await session.scalars(select(SmartProxy).order_by(SmartProxy.id.asc()))).all())
         statuses: list[dict[str, Any]] = []
-        stable_changed: list[SmartProxy] = []
         for proxy in proxies:
             status = await smart_proxy_runtime_status(session, proxy, run_delay=False)
-            proxy.status = status["status"]
-            proxy.last_error = status["error"]
-            changed = add_smart_proxy_switch_log(session, proxy, status.get("current_node"), reason="WebSocket 状态推送发现当前节点变化")
-            if changed:
-                stable_changed.append(proxy)
+            status["mihomo_current_node"] = status.get("current_node")
             status["switch_count"] = proxy.switch_count or 0
-            status["current_node"] = proxy.current_node
+            status["current_node"] = proxy.current_node or status.get("mihomo_current_node")
+            status["state_synced"] = not status.get("mihomo_current_node") or status.get("mihomo_current_node") == proxy.current_node
             statuses.append(status)
-        await session.commit()
-        if stable_changed:
-            await apply_stability_priority_runtime(session, stable_changed)
-        return {"core": core, "proxies": statuses}
+        return {"core": core, "proxies": statuses, "monitor": monitor}
 
 
 async def _status_payload(topics: set[str]) -> dict[str, Any]:

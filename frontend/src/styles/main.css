@@ -255,8 +255,10 @@ a {
     radial-gradient(circle at 30% 22%, color-mix(in srgb, var(--accent-hover) 30%, transparent), transparent 55%),
     var(--accent-soft);
   color: var(--accent-hover);
+  font-size: 18px;
   font-weight: 800;
   letter-spacing: 0.02em;
+  line-height: 1;
   box-shadow: 0 10px 22px color-mix(in srgb, var(--accent-deep) 20%, transparent);
 }
 
@@ -284,6 +286,11 @@ a {
 .ant-current span {
   letter-spacing: 0.11em;
   text-transform: uppercase;
+}
+
+.brand span {
+  letter-spacing: 0.03em;
+  text-transform: none;
 }
 
 nav {

@@ -52,6 +52,7 @@ from app.services.smart_proxy import (
     public_endpoint_for,
     smart_proxy_traffic_policy,
     smart_proxy_uses_global_policy,
+    smart_proxy_monitor_state,
     smart_proxy_runtime_status,
     smart_proxy_candidate_count,
     write_mihomo_runtime_config,
@@ -413,6 +414,7 @@ async def _global_config(session: SessionDep) -> SmartProxyGlobalConfig:
         smart_proxy_bind_host=settings.SMART_PROXY_BIND_HOST.strip() or "127.0.0.1",
         smart_proxy_auto_apply_interval_minutes=await get_smart_proxy_auto_apply_interval_minutes(session),
         smart_proxy_monitor_interval_minutes=await get_smart_proxy_monitor_interval_minutes(session),
+        smart_proxy_monitor_state=await smart_proxy_monitor_state(session),
         mihomo_runtime_config_path=await get_mihomo_runtime_config_path(session),
         mihomo_core_config_path=await get_mihomo_core_config_path(session),
         traffic_guard_enabled=policy.traffic_guard_enabled,
@@ -710,18 +712,31 @@ async def get_smart_proxy_status(
     session: SessionDep,
     current_user: CurrentUser,
     delay: bool = Query(default=False),
+    sync: bool = Query(default=False),
 ) -> SmartProxyStatus:
     await _ensure_node_pool_for_candidates(session, current_user.username)
     proxy = await session.get(SmartProxy, proxy_id)
     if proxy is None:
         raise HTTPException(status_code=404, detail="Smart proxy not found")
     status_payload = await smart_proxy_runtime_status(session, proxy, run_delay=delay)
-    proxy.status = status_payload["status"]
-    proxy.last_error = status_payload["error"]
-    changed = add_smart_proxy_switch_log(session, proxy, status_payload.get("current_node"), reason="页面状态刷新发现当前节点变化")
+    status_payload["mihomo_current_node"] = status_payload.get("current_node")
+    changed = False
+    if sync:
+        proxy.status = status_payload["status"]
+        proxy.last_error = status_payload["error"]
+        failover_node = status_payload.get("stable_failover_node")
+        changed = add_smart_proxy_switch_log(
+            session,
+            proxy,
+            failover_node or status_payload.get("current_node"),
+            reason="稳定优先检测到当前节点不可用，切换到可用节点" if failover_node else "手动运行状态诊断同步当前节点",
+        )
+        await session.commit()
     status_payload["switch_count"] = proxy.switch_count or 0
-    status_payload["current_node"] = proxy.current_node
-    await session.commit()
+    status_payload["current_node"] = proxy.current_node or status_payload.get("mihomo_current_node")
+    status_payload["state_synced"] = (
+        not status_payload.get("mihomo_current_node") or status_payload.get("mihomo_current_node") == proxy.current_node
+    )
     if changed:
         await apply_stability_priority_runtime(session, [proxy])
     return SmartProxyStatus(**status_payload)

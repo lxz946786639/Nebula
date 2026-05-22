@@ -112,6 +112,7 @@ class SmartProxyGlobalConfig(BaseModel):
     smart_proxy_bind_host: str = "127.0.0.1"
     smart_proxy_auto_apply_interval_minutes: int
     smart_proxy_monitor_interval_minutes: int
+    smart_proxy_monitor_state: dict[str, object] = Field(default_factory=dict)
     mihomo_runtime_config_path: str
     mihomo_core_config_path: str
     traffic_guard_enabled: bool
@@ -231,6 +232,8 @@ class SmartProxyStatus(BaseModel):
     core_available: bool
     status: str
     current_node: str | None = None
+    mihomo_current_node: str | None = None
+    state_synced: bool = True
     candidate_nodes: int = 0
     runtime_nodes: int = 0
     online_nodes: int = 0

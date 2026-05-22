@@ -134,7 +134,7 @@
       </el-descriptions-item>
       <el-descriptions-item label="连接">{{ status.active_connections }} / {{ status.total_connections }}</el-descriptions-item>
       <el-descriptions-item label="内部适配器">{{ status.adapter_count }}</el-descriptions-item>
-      <el-descriptions-item label="流量">{{ formatBytes(status.upload_bytes) }} / {{ formatBytes(status.download_bytes) }}</el-descriptions-item>
+      <el-descriptions-item label="转发流量">{{ formatBytes(status.upload_bytes) }} / {{ formatBytes(status.download_bytes) }}</el-descriptions-item>
     </el-descriptions>
 
     <div class="mobile-summary-grid">
@@ -414,6 +414,7 @@ interface AntProxyScheduleConfig {
 }
 
 const ANT_PROXY_CACHE_KEY = 'nebula:ant-proxy:session-cache:v1'
+const STATUS_POLL_INTERVAL_MS = 5000
 const emptyUser: AntProxyUser = {
   logged_in: false,
   oauth_id: '',
@@ -497,6 +498,7 @@ const antSmartProxyAddressGroups = computed(() =>
   })
 )
 let restoredFromSessionCache = false
+let statusPollTimer: ReturnType<typeof window.setInterval> | null = null
 
 const loginForm = reactive({
   username: '',
@@ -642,6 +644,27 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function refreshDynamicStatus() {
+  if (reloginMode.value) return
+  const response = await http.get<AntProxyStatus>('/ant-proxy/status')
+  applyStatus(response.data)
+  writeSessionCache()
+}
+
+function startStatusPolling() {
+  if (statusPollTimer !== null || typeof window === 'undefined') return
+  statusPollTimer = window.setInterval(() => {
+    if (!status.loaded || reloginMode.value) return
+    void refreshDynamicStatus().catch(() => undefined)
+  }, STATUS_POLL_INTERVAL_MS)
+}
+
+function stopStatusPolling() {
+  if (statusPollTimer === null || typeof window === 'undefined') return
+  window.clearInterval(statusPollTimer)
+  statusPollTimer = null
 }
 
 async function refreshNodes(options: { silent?: boolean; refreshLatency?: boolean } = {}) {
@@ -888,8 +911,10 @@ function formatBytes(value: number) {
 }
 
 onMounted(async () => {
+  startStatusPolling()
   if (restoredFromSessionCache) {
     writeSessionCache()
+    void refreshDynamicStatus().catch(() => undefined)
     return
   }
   await load()
@@ -897,6 +922,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  stopStatusPolling()
   writeSessionCache()
 })
 </script>
@@ -1183,10 +1209,15 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
+.ant-line-filter :deep(.el-radio-button__inner:hover) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .ant-line-filter :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
   border-color: var(--accent);
-  background: var(--accent-strong);
-  background-color: var(--accent-strong);
+  background: var(--accent);
+  background-color: var(--accent);
   color: var(--accent-contrast);
   box-shadow: -1px 0 0 0 var(--accent);
 }

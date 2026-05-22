@@ -59,7 +59,8 @@ async def _schedule_config(session: SessionDep) -> AntProxyScheduleConfig:
     )
 
 
-def _status() -> AntProxyStatus:
+async def _status(session: SessionDep) -> AntProxyStatus:
+    await ant_proxy_service.persist_traffic_totals(session)
     return AntProxyStatus.model_validate(ant_proxy_service.status())
 
 
@@ -96,8 +97,8 @@ async def _resolve_ant_listen_port(session: SessionDep, requested_port: int | No
 
 
 @router.get("/status", response_model=AntProxyStatus)
-async def status(current_user: CurrentUser) -> AntProxyStatus:
-    return _status()
+async def status(current_user: CurrentUser, session: SessionDep) -> AntProxyStatus:
+    return await _status(session)
 
 
 @router.get("/schedule", response_model=AntProxyScheduleConfig)
@@ -163,7 +164,7 @@ async def refresh(payload: AntProxyRefreshRequest, current_user: CurrentUser, se
         await ant_proxy_service.save_state(session)
     except AntProxyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _status()
+    return await _status(session)
 
 
 @router.post("/upload", response_model=AntProxyStatus)
@@ -185,7 +186,7 @@ async def upload_db(
         await ant_proxy_service.save_state(session)
     except AntProxyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _status()
+    return await _status(session)
 
 
 @router.post("/login", response_model=AntProxyStatus)
@@ -203,7 +204,7 @@ async def login(payload: AntProxyLoginRequest, current_user: CurrentUser, sessio
         await ant_proxy_service.save_state(session)
     except AntProxyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _status()
+    return await _status(session)
 
 
 @router.post("/select", response_model=AntProxyStatus)
@@ -214,7 +215,7 @@ async def select_node(payload: AntProxySelectRequest, current_user: CurrentUser,
         await ant_proxy_service.save_state(session)
     except AntProxyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _status()
+    return await _status(session)
 
 
 @router.post("/start", response_model=AntProxyStatus)
@@ -242,14 +243,15 @@ async def start(payload: AntProxyStartRequest, current_user: CurrentUser, sessio
         await ant_proxy_service.stop()
         await _apply_ant_mihomo_runtime(session)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _status()
+    return await _status(session)
 
 
 @router.post("/stop", response_model=AntProxyStatus)
 async def stop(current_user: CurrentUser, session: SessionDep) -> AntProxyStatus:
+    await ant_proxy_service.persist_traffic_totals(session)
     await ant_proxy_service.stop()
     await _apply_ant_mihomo_runtime(session)
-    return _status()
+    return await _status(session)
 
 
 @router.post("/test", response_model=AntProxyTestResult)

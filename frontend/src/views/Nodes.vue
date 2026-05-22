@@ -27,8 +27,9 @@
       </el-table-column>
       <el-table-column prop="name" label="节点" min-width="240" show-overflow-tooltip />
       <el-table-column prop="type" label="协议" width="100" />
-      <el-table-column prop="server" label="服务器" min-width="180" show-overflow-tooltip />
-      <el-table-column prop="port" label="端口" width="100" />
+      <el-table-column label="服务器" min-width="220" show-overflow-tooltip>
+        <template #default="{ row }">{{ serverEndpoint(row) }}</template>
+      </el-table-column>
       <el-table-column prop="country_code" label="国家" width="90" />
       <el-table-column label="延迟" width="110">
         <template #default="{ row }">
@@ -38,10 +39,10 @@
           <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column label="来源" min-width="150" show-overflow-tooltip>
+      <el-table-column label="来源|分组" min-width="190" show-overflow-tooltip>
         <template #default="{ row }">
           <div class="inline-cell centered">
-            <span>{{ row.source_subscription_name || '-' }}</span>
+            <span>{{ sourceGroupText(row) }}</span>
             <el-tooltip v-if="row.source_subscription_status === 'failed'" :content="row.source_subscription_error || '订阅同步异常'" placement="top">
               <el-tag size="small" type="danger" effect="plain">异常</el-tag>
             </el-tooltip>
@@ -49,7 +50,6 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="source_group" label="分组" width="100" />
       <el-table-column label="标签" min-width="180" class-name="table-cell-center">
         <template #default="{ row }">
           <div class="tag-cell">
@@ -86,16 +86,12 @@
         </div>
         <dl class="mobile-kv">
           <div>
-            <dt>来源</dt>
+            <dt>来源|分组</dt>
             <dd>
-              {{ row.source_subscription_name || '-' }}
+              {{ sourceGroupText(row) }}
               <el-tag v-if="row.source_subscription_status === 'failed'" size="small" type="danger" effect="plain">异常</el-tag>
               <el-tag v-else-if="row.source_subscription_status === 'syncing'" size="small" type="warning" effect="plain">同步中</el-tag>
             </dd>
-          </div>
-          <div>
-            <dt>分组</dt>
-            <dd>{{ row.source_group || '-' }}</dd>
           </div>
           <div>
             <dt>更新时间</dt>
@@ -288,6 +284,22 @@ function latencyTag(value: number) {
   if (value <= 300) return 'success'
   if (value <= 800) return 'warning'
   return 'danger'
+}
+
+function hasPort(row: NodeItem) {
+  return row.port !== null && row.port !== undefined && `${row.port}` !== ''
+}
+
+function serverEndpoint(row: NodeItem) {
+  if (!row.server && !hasPort(row)) return '-'
+  if (!row.server) return `:${row.port}`
+  return hasPort(row) ? `${row.server}:${row.port}` : row.server
+}
+
+function sourceGroupText(row: NodeItem) {
+  const source = row.source_subscription_name || '-'
+  const group = row.source_group || '-'
+  return `${source} | ${group}`
 }
 
 function showRaw(row: NodeItem) {

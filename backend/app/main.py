@@ -51,6 +51,8 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     await _restore_ant_smart_proxy_runtime()
     start_scheduler()
     yield
+    async with AsyncSessionLocal() as session:
+        await ant_proxy_service.persist_traffic_totals(session)
     await ant_proxy_service.stop()
     stop_scheduler()
     await close_redis()
@@ -58,7 +60,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
 app = FastAPI(
     title=settings.APP_NAME,
-    version="1.1.1",
+    version="1.1.2",
     description="Modern subscription aggregation and conversion platform powered by subconverter.",
     lifespan=lifespan,
 )

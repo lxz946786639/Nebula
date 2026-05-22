@@ -15,7 +15,7 @@ from app.schemas.settings import SettingBulkUpdate, SettingRead
 from app.services.audit import write_audit
 from app.services.node_pool import sync_node_pool_background
 from app.services.settings import get_subconverter_url
-from app.services.smart_proxy import refresh_smart_proxy_statuses
+from app.services.smart_proxy import refresh_smart_proxy_statuses_if_due
 from app.services.subconverter import SubconverterClient
 
 
@@ -138,7 +138,7 @@ def _assert_read_only_settings_unchanged(
 async def _refresh_smart_proxy_statuses_background(actor: str) -> None:
     async with AsyncSessionLocal() as session:
         try:
-            summary = await refresh_smart_proxy_statuses(session)
+            summary = await refresh_smart_proxy_statuses_if_due(session, force=True)
             await write_audit(
                 session,
                 actor=actor,
