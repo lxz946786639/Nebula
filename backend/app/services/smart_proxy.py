@@ -684,28 +684,26 @@ async def ensure_unique_port(session: AsyncSession, port: int, *, exclude_id: in
 
 async def source_nodes_for_proxy(session: AsyncSession, proxy: SmartProxy, *, latency_order: bool = True) -> list[Node]:
     stmt = select(Node).where(Node.enabled.is_(True))
+    source_mode = str(proxy.source_mode or "all")
     subscription_ids = _normalize_list(proxy.subscription_ids)
     country_codes = [str(item).upper() for item in _normalize_list(proxy.country_codes) if str(item).strip()]
     protocol_types = [str(item).lower() for item in _normalize_list(proxy.protocol_types) if str(item).strip()]
     source_node_ids = [int(item) for item in _normalize_list(proxy.node_ids) if str(item).strip()]
     tags = [str(item).strip() for item in _normalize_list(proxy.tags) if str(item).strip()]
 
-    if proxy.source_mode == "manual":
+    if source_mode == "manual":
         if not source_node_ids:
             return []
         stmt = stmt.where(Node.id.in_(source_node_ids))
-    elif proxy.source_mode == "subscription":
+    elif source_mode == "subscription":
         if not subscription_ids:
             return []
         stmt = stmt.where(Node.source_subscription_id.in_(subscription_ids))
-    elif proxy.source_mode == "country":
-        if not country_codes:
-            return []
-        stmt = stmt.where(Node.country_code.in_(country_codes))
-    elif proxy.source_mode == "tag" and not tags:
-        return []
 
-    if proxy.source_mode != "manual" and protocol_types:
+    if country_codes:
+        stmt = stmt.where(Node.country_code.in_(country_codes))
+
+    if source_mode != "manual" and protocol_types:
         stmt = stmt.where(Node.type.in_(protocol_types))
 
     if latency_order:
@@ -713,8 +711,8 @@ async def source_nodes_for_proxy(session: AsyncSession, proxy: SmartProxy, *, la
     else:
         stmt = stmt.order_by(Node.id.asc())
     nodes = list((await session.scalars(stmt)).all())
-    filtered = [node for node in nodes if _tag_match(node, tags)] if proxy.source_mode == "tag" else nodes
-    if proxy.source_mode == "manual" and source_node_ids:
+    filtered = [node for node in nodes if _tag_match(node, tags)] if tags else nodes
+    if source_mode == "manual" and source_node_ids:
         by_id = {node.id: node for node in filtered}
         return [by_id[node_id] for node_id in source_node_ids if node_id in by_id]
     return filtered

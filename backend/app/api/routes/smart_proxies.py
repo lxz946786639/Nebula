@@ -102,7 +102,7 @@ SMART_PROXY_PRESETS = [
         proxy_type="mixed",
         strategy="stable",
         scenario="latency",
-        source_mode="country",
+        source_mode="all",
         country_codes=["HK"],
         health_check_url="http://www.gstatic.com/generate_204",
     ),
@@ -113,7 +113,7 @@ SMART_PROXY_PRESETS = [
         proxy_type="mixed",
         strategy="fallback",
         scenario="ai",
-        source_mode="country",
+        source_mode="all",
         country_codes=["JP"],
         health_check_url="https://chat.openai.com/cdn-cgi/trace",
     ),
@@ -124,7 +124,7 @@ SMART_PROXY_PRESETS = [
         proxy_type="mixed",
         strategy="fallback",
         scenario="ai",
-        source_mode="country",
+        source_mode="all",
         country_codes=["US"],
         health_check_url="https://chat.openai.com/cdn-cgi/trace",
     ),
@@ -135,7 +135,7 @@ SMART_PROXY_PRESETS = [
         proxy_type="mixed",
         strategy="url-test",
         scenario="streaming",
-        source_mode="tag",
+        source_mode="all",
         tags=["streaming"],
         health_check_url="https://www.netflix.com/title/80018499",
         tolerance=80,
@@ -265,6 +265,8 @@ def _prepare_payload(data: dict) -> dict:
             raise SmartProxyError("请填写代理名称")
     if "data_source" in data and data["data_source"] is not None:
         data["data_source"] = normalize_data_source(str(data["data_source"]))
+    if "source_mode" in data and data["source_mode"] is not None:
+        data["source_mode"] = str(data["source_mode"] or "all").strip() or "all"
     if "proxy_type" in data and data["proxy_type"] is not None:
         data["proxy_type"] = normalize_proxy_type(str(data["proxy_type"]))
     if "strategy" in data and data["strategy"] is not None:
@@ -309,6 +311,8 @@ def _prepare_payload(data: dict) -> dict:
         data["node_ids"] = []
         data["strategy_node_ids"] = []
     elif data.get("data_source") == "subscription":
+        if data.get("source_mode") in {"country", "tag"}:
+            data["source_mode"] = "all"
         data["ant_node_ids"] = []
         data["ant_strategy_node_ids"] = []
     return data
@@ -351,6 +355,7 @@ def _validate_source_config(
     node_ids: list[int] | None,
     ant_node_ids: list[str] | None,
 ) -> None:
+    del country_codes, tags
     if source_mode == "subscription" and data_source == "ant":
         raise SmartProxyError("蚂蚁节点暂不支持指定订阅来源")
     if source_mode == "manual" and data_source == "ant" and not (ant_node_ids or []):
@@ -361,10 +366,6 @@ def _validate_source_config(
         raise SmartProxyError("手动节点模式请至少选择一个节点")
     if source_mode == "subscription" and data_source != "ant" and not (subscription_ids or []):
         raise SmartProxyError("指定订阅模式请至少选择一个订阅来源")
-    if source_mode == "country" and not (country_codes or []):
-        raise SmartProxyError("指定国家模式请至少选择一个国家/地区")
-    if source_mode == "tag" and not (tags or []):
-        raise SmartProxyError("指定标签模式请至少选择一个节点标签")
 
 
 def _validate_proxy_strategy(proxy: SmartProxy) -> None:

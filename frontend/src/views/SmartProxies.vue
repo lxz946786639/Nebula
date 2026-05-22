@@ -363,9 +363,8 @@
               </el-select>
             </el-form-item>
             <el-form-item
-              v-if="isAntSource || form.source_mode === 'country'"
-              :label="isAntSource ? '指定地区' : '国家/地区'"
-              :required="!isAntSource"
+              v-if="isAntSource || form.data_source === 'subscription'"
+              :label="isAntSource ? '指定地区' : '国家/地区过滤'"
             >
               <el-select
                 v-model="countryCodes"
@@ -374,7 +373,7 @@
                 allow-create
                 default-first-option
                 clearable
-                :placeholder="isAntSource ? '不选择则不限地区' : '选择或输入国家代码'"
+                :placeholder="isAntSource ? '不选择则不限地区' : '不选择则不限国家/地区'"
                 @change="onSourceFilterChange"
               >
                 <el-option
@@ -386,9 +385,8 @@
               </el-select>
             </el-form-item>
             <el-form-item
-              v-if="isAntSource || form.source_mode === 'tag'"
-              :label="isAntSource ? '指定线路' : tagFilterLabel"
-              :required="!isAntSource"
+              v-if="isAntSource || form.data_source === 'subscription'"
+              :label="isAntSource ? '指定线路' : `${tagFilterLabel}过滤`"
             >
               <el-select
                 v-model="tags"
@@ -397,7 +395,7 @@
                 allow-create
                 default-first-option
                 clearable
-                :placeholder="isAntSource ? '不选择则不限线路' : '选择或输入标签'"
+                :placeholder="isAntSource ? '不选择则不限线路' : '不选择则不限标签'"
                 @change="onSourceFilterChange"
               >
                 <el-option
@@ -1508,8 +1506,6 @@ const sourceModeOptions = computed(() =>
     : [
         { label: '所有节点', value: 'all' },
         { label: '指定订阅', value: 'subscription' },
-        { label: '指定国家', value: 'country' },
-        { label: '指定标签', value: 'tag' },
         { label: '指定节点', value: 'manual' },
       ],
 )
@@ -2085,6 +2081,13 @@ function setActiveStrategyIds(values: NodeKey[]) {
   }
 }
 
+function normalizeSourceModeForDataSource(dataSource: 'subscription' | 'ant' | string | undefined, sourceMode: string | undefined) {
+  const mode = String(sourceMode || 'all')
+  if (dataSource === 'subscription' && ['country', 'tag'].includes(mode)) return 'all'
+  if (dataSource === 'ant' && mode === 'subscription') return 'all'
+  return mode
+}
+
 function clearManualNodes() {
   if (isAntSource.value) antNodeIds.value = []
   else nodeIds.value = []
@@ -2109,8 +2112,6 @@ function clearSourceFiltersForMode(mode: string) {
     subscriptionIds.value = []
     return
   }
-  if (mode !== 'country') countryCodes.value = []
-  if (mode !== 'tag') tags.value = []
   if (mode !== 'subscription') subscriptionIds.value = []
 }
 
@@ -2139,8 +2140,6 @@ function onSourceModeChange(value: string | number | boolean | undefined) {
     return
   }
   if (mode === 'manual') {
-    countryCodes.value = []
-    tags.value = []
     subscriptionIds.value = []
     protocolTypes.value = []
   } else {
@@ -2173,14 +2172,6 @@ function validateStrategyBeforeSave() {
   }
   if (!isAntSource.value && form.source_mode === 'subscription' && subscriptionIds.value.length === 0) {
     ElMessage.warning('指定订阅模式请至少选择一个订阅来源')
-    return false
-  }
-  if (!isAntSource.value && form.source_mode === 'country' && countryCodes.value.length === 0) {
-    ElMessage.warning('指定国家模式请至少选择一个国家/地区')
-    return false
-  }
-  if (!isAntSource.value && form.source_mode === 'tag' && tags.value.length === 0) {
-    ElMessage.warning('指定标签模式请至少选择一个节点标签')
     return false
   }
   if (form.source_mode === 'manual' && activeStrategyIds().length) {
@@ -2295,6 +2286,7 @@ function applyGlobalTrafficDefaultsToForm() {
 
 function applyPreset(preset: SmartProxyPreset) {
   selectedPresetKey.value = preset.key
+  const dataSource = preset.data_source || 'subscription'
   Object.assign(form, {
     name: preset.key === CUSTOM_PRESET_KEY ? '' : preset.name,
     description: '',
@@ -2302,8 +2294,8 @@ function applyPreset(preset: SmartProxyPreset) {
     strategy: preset.strategy,
     stability_priority: preset.strategy === 'stable',
     scenario: preset.scenario,
-    data_source: preset.data_source || 'subscription',
-    source_mode: preset.source_mode,
+    data_source: dataSource,
+    source_mode: normalizeSourceModeForDataSource(dataSource, preset.source_mode),
     health_check_url: preset.health_check_url,
     health_check_interval: preset.health_check_interval,
     tolerance: preset.tolerance,
@@ -2401,6 +2393,7 @@ async function openEdit(row: SmartProxy) {
   editingId.value = row.id
   creationMode.value = row.source_mode === 'manual' ? 'manual' : 'advanced'
   createWizardStep.value = 'form'
+  const dataSource = row.data_source || 'subscription'
   Object.assign(form, {
     name: row.name,
     description: row.description || '',
@@ -2410,8 +2403,8 @@ async function openEdit(row: SmartProxy) {
     strategy: row.strategy,
     stability_priority: row.strategy === 'stable',
     scenario: row.scenario,
-    data_source: row.data_source || 'subscription',
-    source_mode: row.source_mode,
+    data_source: dataSource,
+    source_mode: normalizeSourceModeForDataSource(dataSource, row.source_mode),
     health_check_url: row.health_check_url,
     health_check_interval: row.health_check_interval,
     tolerance: row.tolerance,
@@ -2453,8 +2446,8 @@ function payload() {
     low_remaining_mb: useGlobalTrafficPolicy ? null : Number(form.low_remaining_mb || 0),
     expire_soon_days: useGlobalTrafficPolicy ? null : Number(form.expire_soon_days || 0),
     exclude_unknown_traffic: useGlobalTrafficPolicy ? null : Boolean(form.exclude_unknown_traffic),
-    country_codes: antSource || mode === 'country' ? countryCodes.value.map((item) => item.trim().toUpperCase()).filter(Boolean) : [],
-    tags: antSource || mode === 'tag' ? tags.value.map((item) => item.trim()).filter(Boolean) : [],
+    country_codes: countryCodes.value.map((item) => item.trim().toUpperCase()).filter(Boolean),
+    tags: tags.value.map((item) => item.trim()).filter(Boolean),
     subscription_ids: !antSource && mode === 'subscription' ? subscriptionIds.value : [],
     node_ids: !antSource && mode === 'manual' ? nodeIds.value : [],
     strategy_node_ids: antSource ? [] : strategyNodeIds.value,
@@ -2530,7 +2523,9 @@ async function loadNodeOptions() {
       items.forEach((item) => {
         nodeCache.value[nodeCacheKey(item.id)] = item
       })
-      nodeOptions.value = nodePickerMode.value === 'strategy' ? items.filter((item) => sourceNodeMatches(item)) : items
+      nodeOptions.value = nodePickerMode.value === 'strategy'
+        ? items.filter((item) => sourceNodeMatches(item))
+        : items.filter((item) => nodePickerSourceOptionMatches(item))
       return
     }
 
@@ -2548,7 +2543,7 @@ async function loadNodeOptions() {
     })
     nodeOptions.value = nodePickerMode.value === 'strategy'
       ? items.filter((item: NodeItem) => sourceNodeMatches(item))
-      : items
+      : items.filter((item: NodeItem) => nodePickerSourceOptionMatches(item))
   } finally {
     nodePickerLoading.value = false
   }
@@ -2609,6 +2604,24 @@ function antNodeMatchesExtraFilters(node: NodeItem) {
   return true
 }
 
+function subscriptionNodeMatchesExtraFilters(node: NodeItem) {
+  if (countryCodes.value.length) {
+    const selectedCountries = countryCodes.value.map((item) => item.trim().toUpperCase()).filter(Boolean)
+    if (!selectedCountries.includes(String(node.country_code || '').toUpperCase())) return false
+  }
+  if (tags.value.length) {
+    const selectedTags = new Set(tags.value.map((item) => item.trim()).filter(Boolean))
+    if (!(node.tags || []).some((item) => selectedTags.has(String(item).trim()))) return false
+  }
+  return true
+}
+
+function nodePickerSourceOptionMatches(node: NodeItem) {
+  if (!node.enabled) return false
+  if (isAntSource.value) return antNodeMatchesExtraFilters(node)
+  return subscriptionNodeMatchesExtraFilters(node)
+}
+
 function sourceNodeMatches(node: NodeItem) {
   if (!node.enabled) return false
   if (isAntSource.value) {
@@ -2620,22 +2633,16 @@ function sourceNodeMatches(node: NodeItem) {
     const protocols = normalizedProtocolTypes()
     if (protocols.length && !protocols.includes(String(node.type || '').toLowerCase())) return false
   }
-  if (form.source_mode === 'manual') return activeManualIds().map((item) => String(item)).includes(String(node.id))
+  if (form.source_mode === 'manual') {
+    if (!activeManualIds().map((item) => String(item)).includes(String(node.id))) return false
+    return subscriptionNodeMatchesExtraFilters(node)
+  }
   if (form.source_mode === 'subscription') {
     if (!subscriptionIds.value.length) return false
-    return node.source_subscription_id !== null && node.source_subscription_id !== undefined && subscriptionIds.value.includes(Number(node.source_subscription_id))
+    if (node.source_subscription_id === null || node.source_subscription_id === undefined) return false
+    if (!subscriptionIds.value.includes(Number(node.source_subscription_id))) return false
   }
-  if (form.source_mode === 'country') {
-    if (!countryCodes.value.length) return false
-    const selectedCountries = countryCodes.value.map((item) => item.trim().toUpperCase()).filter(Boolean)
-    return selectedCountries.includes(String(node.country_code || '').toUpperCase())
-  }
-  if (form.source_mode === 'tag') {
-    if (!tags.value.length) return false
-    const selectedTags = new Set(tags.value.map((item) => item.trim()).filter(Boolean))
-    return (node.tags || []).some((item) => selectedTags.has(String(item).trim()))
-  }
-  return true
+  return subscriptionNodeMatchesExtraFilters(node)
 }
 
 async function openNodePicker(mode: NodePickerMode = 'source') {

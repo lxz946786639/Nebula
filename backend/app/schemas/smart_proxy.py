@@ -143,7 +143,7 @@ class SmartProxyPreset(BaseModel):
     stability_priority: bool = False
     scenario: str = "general"
     data_source: str = "subscription"
-    source_mode: str = "country"
+    source_mode: str = "all"
     country_codes: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     protocol_types: list[str] = Field(default_factory=list)
