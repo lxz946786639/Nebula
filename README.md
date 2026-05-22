@@ -259,6 +259,7 @@ Redis 连接地址不在页面中维护，只能在部署时通过 `REDIS_URL` �
 | `SMART_PROXY_BIND_HOST` | 智能代理宿主机端口绑定地址，默认 `127.0.0.1`；外部设备访问需改为 `0.0.0.0` |
 | `SMART_PROXY_TRAFFIC_GUARD_ENABLED` | 是否启用智能代理流量保护 |
 | `ANT_ADAPTER_BIND_HOST` / `ANT_ADAPTER_CONNECT_HOST` | 蚂蚁节点内部适配器地址，Docker Compose 默认 `0.0.0.0` / `backend` |
+| `MIHOMO_PROXY_SERVER_NAMESERVERS` | Mihomo 解析代理节点服务器名使用的 DNS；Docker Compose 默认 `127.0.0.11`，用于解析 `backend` 等服务名 |
 | `ANT_PROXY_AUTO_REFRESH_ENABLED` | 蚂蚁代理账号登录节点是否启用后台自动刷新 |
 | `ANT_PROXY_AUTO_REFRESH_INTERVAL_MINUTES` | 蚂蚁代理账号登录节点后台刷新间隔，默认 `360` 分钟 |
 
@@ -279,7 +280,7 @@ docker compose up -d
 - 智能代理集成：蚂蚁节点不会写入普通「节点管理」节点池，而是在「智能代理」中作为独立数据来源使用。
 - 统一代理出口：对外提供的代理地址由「智能代理」创建，仍使用 Mihomo listener 和 `37890-37900` 端口池；蚂蚁页面只展示已配置的智能代理地址。
 
-在「智能代理」新增代理时，将「数据来源」选择为「蚂蚁节点」后，可以按所有蚂蚁节点或指定节点作为候选，并继续用地区、免费/付费线路、协议类型和调度策略进行筛选。Nebula 会为候选蚂蚁节点启动内部 SOCKS 适配器，Mihomo 通过这些内部上游完成统一调度。Docker Compose 部署时，内部适配器默认监听在后端容器的 `0.0.0.0`，Mihomo 通过 `backend` 服务名访问；跨主机或自定义网络部署时，可通过 `ANT_ADAPTER_BIND_HOST` / `ANT_ADAPTER_CONNECT_HOST` 覆盖。
+在「智能代理」新增代理时，将「数据来源」选择为「蚂蚁节点」后，可以按所有蚂蚁节点或指定节点作为候选，并继续用地区、免费/付费线路、协议类型和调度策略进行筛选。Nebula 会为候选蚂蚁节点启动内部 SOCKS 适配器，Mihomo 通过这些内部上游完成统一调度。Docker Compose 部署时，内部适配器默认监听在后端容器的 `0.0.0.0`，Mihomo 通过 `backend` 服务名访问；runtime 会写入 Docker 内置 DNS `127.0.0.11` 作为 `proxy-server-nameserver`，确保 Mihomo 能解析 `backend`。本地开发如果使用 `host.docker.internal` 或 Docker Desktop 网关 IP，则不会默认注入该 DNS。跨主机或自定义网络部署时，可通过 `ANT_ADAPTER_BIND_HOST` / `ANT_ADAPTER_CONNECT_HOST` 覆盖。
 
 ## 项目结构
 

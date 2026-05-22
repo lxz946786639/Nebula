@@ -35,6 +35,7 @@ from app.services.settings import (
     get_mihomo_api_secret,
     get_mihomo_api_url,
     get_mihomo_core_config_path,
+    get_mihomo_proxy_server_nameservers,
     get_mihomo_runtime_config_path,
     get_proxy_public_base_url,
     get_smart_proxy_exclude_unknown_traffic,
@@ -1105,6 +1106,51 @@ def _base_runtime_config() -> dict[str, Any]:
     }
 
 
+def _dedupe_nameservers(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    nameservers: list[str] = []
+    for value in values:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        nameservers.append(item)
+    return nameservers
+
+
+def _host_needs_docker_dns(host: str) -> bool:
+    value = str(host or "").strip().lower()
+    if not value or value in {"localhost", "127.0.0.1", "::1", "host.docker.internal", "gateway.docker.internal"}:
+        return False
+    try:
+        ip_address(value)
+        return False
+    except ValueError:
+        return True
+
+
+async def _runtime_proxy_server_nameservers(session: AsyncSession) -> list[str]:
+    configured = await get_mihomo_proxy_server_nameservers(session)
+    if configured:
+        return _dedupe_nameservers(configured)
+
+    core_path = await get_mihomo_core_config_path(session)
+    if core_path.startswith("/root/.config/mihomo/"):
+        _, adapter_connect_host = await ant_adapter_hosts(session)
+        if _host_needs_docker_dns(adapter_connect_host):
+            # Docker Compose service names such as "backend" are resolved by
+            # Docker's embedded DNS. Mihomo uses proxy-server-nameserver for
+            # upstream proxy hostnames, so keep Docker DNS in that path.
+            return ["127.0.0.11"]
+    return []
+
+
+async def _apply_runtime_dns_defaults(session: AsyncSession, config: dict[str, Any]) -> None:
+    nameservers = await _runtime_proxy_server_nameservers(session)
+    if nameservers:
+        config.setdefault("dns", {})["proxy-server-nameserver"] = nameservers
+
+
 def _group_config(proxy: SmartProxy, proxy_names: list[str]) -> dict[str, Any]:
     if proxy.strategy == "round-robin":
         group_type = "load-balance"
@@ -1179,6 +1225,7 @@ async def build_mihomo_runtime_config(session: AsyncSession) -> tuple[dict[str, 
         (await session.scalars(select(SmartProxy).where(SmartProxy.enabled.is_(True)).order_by(SmartProxy.id.asc()))).all()
     )
     config = _base_runtime_config()
+    await _apply_runtime_dns_defaults(session, config)
     node_name_by_id: dict[int, str] = {}
     node_raw_by_id: dict[int, dict[str, Any]] = {}
     ant_raw_by_name: dict[str, dict[str, Any]] = {}
@@ -2220,6 +2267,12 @@ async def check_smart_proxy_health(
     average = round(sum(delay for _, delay in online_delays) / online_count) if online_count else None
     health_status, default_health_error = _runtime_node_status(runtime_nodes, online_count)
     health_error = None if online_count else delay_error or default_health_error
+    delay_check = {
+        "check_type": "delay",
+        "status": "ok" if online_count else "failed",
+        "delay": best[1] if best else None,
+        "message": None if online_count else health_error or "All candidate nodes timed out",
+    }
     result.update(
         {
             "status": health_status,
@@ -2228,17 +2281,10 @@ async def check_smart_proxy_health(
             "average_delay": average,
             "best_node": best[0] if best else None,
             "nodes": health_nodes,
-            "checks": [
-                {
-                    "check_type": "delay",
-                    "status": "ok" if online_count else "failed",
-                    "delay": best[1] if best else None,
-                    "message": None if online_count else health_error or "All candidate nodes timed out",
-                }
-            ],
             "error": None if online_count else health_error or "All candidate nodes timed out",
         }
     )
+    result["checks"].append(delay_check)
 
     listener_status, listener_delay, listener_error = await smart_proxy_listener_probe(session, proxy, timeout_ms=timeout_ms)
     result["checks"].append(

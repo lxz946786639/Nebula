@@ -121,8 +121,20 @@ async def bootstrap_defaults(session: AsyncSession) -> None:
             False,
             "Path of the same runtime config as seen by the Mihomo process/container",
         ),
+        "mihomo_proxy_server_nameservers": (
+            settings.MIHOMO_PROXY_SERVER_NAMESERVERS,
+            False,
+            "Comma-separated DNS servers for resolving Mihomo proxy server hostnames",
+        ),
     }
-    dev_synced_keys = {"redis_url", "subconverter_url", "mihomo_api_url", "mihomo_runtime_config_path", "mihomo_core_config_path"}
+    dev_synced_keys = {
+        "redis_url",
+        "subconverter_url",
+        "mihomo_api_url",
+        "mihomo_runtime_config_path",
+        "mihomo_core_config_path",
+        "mihomo_proxy_server_nameservers",
+    }
     for key, (value, secret, description) in defaults.items():
         existing = await session.scalar(select(SystemSetting).where(SystemSetting.key == key))
         if existing is None:

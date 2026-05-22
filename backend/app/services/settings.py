@@ -190,6 +190,16 @@ async def get_mihomo_core_config_path(session: AsyncSession) -> str:
     return await get_setting(session, "mihomo_core_config_path", settings.MIHOMO_CORE_CONFIG_PATH) or settings.MIHOMO_CORE_CONFIG_PATH
 
 
+async def get_mihomo_proxy_server_nameservers(session: AsyncSession) -> list[str]:
+    settings = get_settings()
+    value = await get_setting(
+        session,
+        "mihomo_proxy_server_nameservers",
+        settings.MIHOMO_PROXY_SERVER_NAMESERVERS,
+    )
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
 async def get_smart_proxy_auto_apply_interval_minutes(session: AsyncSession) -> int:
     settings = get_settings()
     return max(
