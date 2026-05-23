@@ -13,7 +13,7 @@ import ssl
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -21,13 +21,16 @@ from urllib.parse import urlsplit
 import aiohttp
 import msgpack
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import BACKEND_DIR, get_settings
 from app.core.locks import exclusive_lock
+from app.core.timezone import as_china, now_china
 from app.models.ant_proxy_state import AntProxyState
+from app.models.ant_proxy_traffic import AntProxyTrafficSample
 from app.models.system_setting import SystemSetting
+from app.services.settings import HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS_KEY, get_history_retention_days
 
 try:
     from cryptography.hazmat.decrepit.ciphers import modes as decrepit_modes
@@ -59,6 +62,7 @@ ANT_PROXY_STATE_ALGORITHM = "aes-256-cfb+hmac-sha256+msgpack"
 ANT_PROXY_STATE_NAME = "default"
 ANT_PROXY_TRAFFIC_STATE_KEY = "ant_proxy_traffic_state"
 ANT_PROXY_TRAFFIC_STATE_DESCRIPTION = "Persisted Ant proxy adapter traffic totals"
+ANT_PROXY_TRAFFIC_SAMPLE_INTERVAL = timedelta(seconds=30)
 ANT_PROXY_DYNAMIC_DATA_KEYS = {
     "connections",
     "connection",
@@ -186,6 +190,9 @@ class AntProxyService:
         self.download_bytes = 0
         self._raw_upload_bytes = 0
         self._raw_download_bytes = 0
+        self._active_source_ip_counts: dict[str, int] = {}
+        self._traffic_speed_sample: tuple[datetime, int, int] | None = None
+        self._traffic_last_sampled_at: datetime | None = None
 
     @property
     def running(self) -> bool:
@@ -194,6 +201,24 @@ class AntProxyService:
     @property
     def endpoint(self) -> str:
         return f"socks5://{self._listen_host}:{self._listen_port}"
+
+    def active_source_ips(self) -> list[str]:
+        return sorted(ip for ip, count in self._active_source_ip_counts.items() if count > 0)
+
+    def _track_source_ip(self, writer: asyncio.StreamWriter) -> str | None:
+        source_ip = _writer_peer_host(writer)
+        if source_ip:
+            self._active_source_ip_counts[source_ip] = self._active_source_ip_counts.get(source_ip, 0) + 1
+        return source_ip
+
+    def _release_source_ip(self, source_ip: str | None) -> None:
+        if not source_ip:
+            return
+        count = self._active_source_ip_counts.get(source_ip, 0) - 1
+        if count > 0:
+            self._active_source_ip_counts[source_ip] = count
+        else:
+            self._active_source_ip_counts.pop(source_ip, None)
 
     def load_db(self, db_path: str | None = None) -> None:
         if db_path:
@@ -389,6 +414,7 @@ class AntProxyService:
             "tolerance": self.tolerance,
             "active_connections": self.active_connections,
             "total_connections": self.total_connections,
+            "source_ip_count": len(self.active_source_ips()),
             "upload_bytes": self.upload_bytes,
             "download_bytes": self.download_bytes,
             "started_at": self.started_at,
@@ -461,6 +487,62 @@ class AntProxyService:
             self.upload_bytes = upload_total
             self.download_bytes = download_total
             return upload_total, download_total
+
+    async def traffic_stats(self, session: AsyncSession, *, observed_at: datetime | None = None) -> dict[str, Any]:
+        observed_at = observed_at or now_china()
+        upload_total, download_total = await self.persist_traffic_totals(session)
+        upload_speed, download_speed = _traffic_speed_from_sample(
+            self._traffic_speed_sample,
+            (observed_at, upload_total, download_total),
+        )
+        self._traffic_speed_sample = (observed_at, upload_total, download_total)
+        source_ips = self.active_source_ips()
+        return {
+            "upload_total": upload_total,
+            "download_total": download_total,
+            "total": upload_total + download_total,
+            "current_upload_speed": upload_speed,
+            "current_download_speed": download_speed,
+            "active_connections": self.active_connections,
+            "total_connections": self.total_connections,
+            "source_ip_count": len(source_ips),
+            "source_ips": source_ips,
+        }
+
+    async def record_traffic_sample_if_due(
+        self,
+        session: AsyncSession,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        async with exclusive_lock("ant_proxy_traffic_samples"):
+            sampled_at = now_china()
+            stats = await self.traffic_stats(session, observed_at=sampled_at)
+            if (
+                not force
+                and self._traffic_last_sampled_at is not None
+                and sampled_at - self._traffic_last_sampled_at < ANT_PROXY_TRAFFIC_SAMPLE_INTERVAL
+            ):
+                return stats
+            session.add(
+                AntProxyTrafficSample(
+                    sampled_at=sampled_at,
+                    upload_total=_safe_int(stats.get("upload_total")),
+                    download_total=_safe_int(stats.get("download_total")),
+                    upload_speed=_safe_int(stats.get("current_upload_speed")),
+                    download_speed=_safe_int(stats.get("current_download_speed")),
+                    active_connections=_safe_int(stats.get("active_connections")),
+                    total_connections=_safe_int(stats.get("total_connections")),
+                    source_ip_count=_safe_int(stats.get("source_ip_count")),
+                )
+            )
+            retention_days = await get_history_retention_days(session, HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS_KEY)
+            if retention_days > 0:
+                cutoff = sampled_at - timedelta(days=retention_days)
+                await session.execute(delete(AntProxyTrafficSample).where(AntProxyTrafficSample.sampled_at < cutoff))
+            await session.commit()
+            self._traffic_last_sampled_at = sampled_at
+            return stats
 
     async def restore(self, session: AsyncSession) -> bool:
         await self.load_traffic_totals(session)
@@ -726,6 +808,7 @@ class AntProxyService:
             _close_writer(writer)
         self._writers.clear()
         self.active_connections = 0
+        self._active_source_ip_counts.clear()
         self.started_at = None
 
     def mihomo_runtime_config(self, *, listen_host: str | None = None) -> dict[str, list[dict[str, Any]]] | None:
@@ -934,6 +1017,7 @@ class AntProxyService:
         node_id: str | None = None,
     ) -> None:
         self._writers.add(local_writer)
+        source_ip = self._track_source_ip(local_writer)
         self.active_connections += 1
         self.total_connections += 1
         remote_writer: asyncio.StreamWriter | None = None
@@ -970,6 +1054,7 @@ class AntProxyService:
                 _close_writer(remote_writer)
             _close_writer(local_writer)
             self._writers.discard(local_writer)
+            self._release_source_ip(source_ip)
             self.active_connections = max(0, self.active_connections - 1)
 
     async def _pipe_local_to_remote(
@@ -1609,6 +1694,204 @@ async def _ant_proxy_traffic_setting(session: AsyncSession) -> SystemSetting | N
     return await session.scalar(select(SystemSetting).where(SystemSetting.key == ANT_PROXY_TRAFFIC_STATE_KEY))
 
 
+def _day_start(value: datetime) -> datetime:
+    value = as_china(value) or value
+    return value.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _hour_start(value: datetime) -> datetime:
+    value = as_china(value) or value
+    return value.replace(minute=0, second=0, microsecond=0)
+
+
+def _traffic_speed_from_sample(
+    previous: tuple[datetime, int, int] | None,
+    current: tuple[datetime, int, int],
+) -> tuple[int, int]:
+    if previous is None:
+        return 0, 0
+    previous_at, previous_upload, previous_download = previous
+    current_at, current_upload, current_download = current
+    seconds = max((current_at - previous_at).total_seconds(), 0.001)
+    upload_delta = max(current_upload - previous_upload, 0)
+    download_delta = max(current_download - previous_download, 0)
+    return round(upload_delta / seconds), round(download_delta / seconds)
+
+
+def _ant_traffic_delta(
+    previous: AntProxyTrafficSample,
+    current: AntProxyTrafficSample,
+) -> tuple[int, int]:
+    upload_delta = current.upload_total - previous.upload_total
+    download_delta = current.download_total - previous.download_total
+    if upload_delta < 0:
+        upload_delta = current.upload_total
+    if download_delta < 0:
+        download_delta = current.download_total
+    return max(upload_delta, 0), max(download_delta, 0)
+
+
+async def _ant_traffic_samples(
+    session: AsyncSession,
+    *,
+    start: datetime,
+    end: datetime,
+) -> list[AntProxyTrafficSample]:
+    samples: list[AntProxyTrafficSample] = []
+    previous = await session.scalar(
+        select(AntProxyTrafficSample)
+        .where(AntProxyTrafficSample.sampled_at < start)
+        .order_by(AntProxyTrafficSample.sampled_at.desc(), AntProxyTrafficSample.id.desc())
+        .limit(1)
+    )
+    if previous is not None:
+        samples.append(previous)
+    samples.extend(
+        list(
+            (
+                await session.scalars(
+                    select(AntProxyTrafficSample)
+                    .where(
+                        AntProxyTrafficSample.sampled_at >= start,
+                        AntProxyTrafficSample.sampled_at <= end,
+                    )
+                    .order_by(AntProxyTrafficSample.sampled_at.asc(), AntProxyTrafficSample.id.asc())
+                )
+            ).all()
+        )
+    )
+    return samples
+
+
+def _ant_usage_between(
+    samples: list[AntProxyTrafficSample],
+    *,
+    start: datetime,
+    end: datetime,
+) -> tuple[int, int]:
+    upload = 0
+    download = 0
+    previous: AntProxyTrafficSample | None = None
+    for sample in samples:
+        sampled_at = as_china(sample.sampled_at) or sample.sampled_at
+        if sampled_at > end:
+            break
+        if previous is not None and sampled_at > start:
+            upload_delta, download_delta = _ant_traffic_delta(previous, sample)
+            upload += upload_delta
+            download += download_delta
+        previous = sample
+    return upload, download
+
+
+def _ant_traffic_period(key: str, label: str, upload: int, download: int) -> dict[str, Any]:
+    return {"key": key, "label": label, "upload": upload, "download": download, "total": upload + download}
+
+
+def _ant_traffic_trend(
+    samples: list[AntProxyTrafficSample],
+    *,
+    start: datetime,
+    end: datetime,
+    granularity: str,
+) -> list[dict[str, Any]]:
+    if granularity == "day":
+        bucket_size = timedelta(days=1)
+        label_format = "%m-%d"
+    else:
+        bucket_size = timedelta(hours=1)
+        label_format = "%H:%M"
+
+    buckets: dict[datetime, dict[str, Any]] = {}
+    cursor = start
+    while cursor <= end:
+        buckets[cursor] = {
+            "at": cursor,
+            "label": cursor.strftime(label_format),
+            "upload": 0,
+            "download": 0,
+            "total": 0,
+        }
+        cursor += bucket_size
+
+    previous: AntProxyTrafficSample | None = None
+    for sample in samples:
+        sampled_at = as_china(sample.sampled_at) or sample.sampled_at
+        if sampled_at > end + bucket_size:
+            break
+        if previous is not None and sampled_at >= start:
+            upload_delta, download_delta = _ant_traffic_delta(previous, sample)
+            bucket_at = _day_start(sampled_at) if granularity == "day" else _hour_start(sampled_at)
+            bucket = buckets.get(bucket_at)
+            if bucket is not None:
+                bucket["upload"] += upload_delta
+                bucket["download"] += download_delta
+                bucket["total"] += upload_delta + download_delta
+        previous = sample
+    return list(buckets.values())
+
+
+def _ant_peak_speed(samples: list[AntProxyTrafficSample]) -> tuple[int, int]:
+    return (
+        max((sample.upload_speed for sample in samples), default=0),
+        max((sample.download_speed for sample in samples), default=0),
+    )
+
+
+async def ant_proxy_traffic_summary(
+    session: AsyncSession,
+    *,
+    granularity: str = "hour",
+) -> dict[str, Any]:
+    granularity = "day" if granularity == "day" else "hour"
+    stats = await ant_proxy_service.record_traffic_sample_if_due(session)
+    now = now_china()
+    today_start = _day_start(now)
+    yesterday_start = today_start - timedelta(days=1)
+    seven_day_start = today_start - timedelta(days=6)
+    thirty_day_start = today_start - timedelta(days=29)
+    trend_start = _hour_start(now) - timedelta(hours=23) if granularity == "hour" else thirty_day_start
+    trend_end = _hour_start(now) if granularity == "hour" else today_start
+    query_start = min(yesterday_start, seven_day_start, thirty_day_start, trend_start)
+    samples = await _ant_traffic_samples(session, start=query_start, end=now)
+
+    today_upload, today_download = _ant_usage_between(samples, start=today_start, end=now)
+    yesterday_upload, yesterday_download = _ant_usage_between(samples, start=yesterday_start, end=today_start)
+    seven_upload, seven_download = _ant_usage_between(samples, start=seven_day_start, end=now)
+    thirty_upload, thirty_download = _ant_usage_between(samples, start=thirty_day_start, end=now)
+    peak_upload_speed, peak_download_speed = _ant_peak_speed(samples)
+    recent_samples = [sample for sample in samples if (as_china(sample.sampled_at) or sample.sampled_at) >= query_start]
+
+    upload_total = _safe_int(stats.get("upload_total"))
+    download_total = _safe_int(stats.get("download_total"))
+    current_upload_speed = _safe_int(stats.get("current_upload_speed"))
+    current_download_speed = _safe_int(stats.get("current_download_speed"))
+
+    return {
+        "upload_total": upload_total,
+        "download_total": download_total,
+        "total": upload_total + download_total,
+        "current_upload_speed": current_upload_speed,
+        "current_download_speed": current_download_speed,
+        "peak_upload_speed": max(peak_upload_speed, current_upload_speed),
+        "peak_download_speed": max(peak_download_speed, current_download_speed),
+        "active_connections": _safe_int(stats.get("active_connections")),
+        "total_connections": _safe_int(stats.get("total_connections")),
+        "source_ip_count": _safe_int(stats.get("source_ip_count")),
+        "sample_count": len(recent_samples),
+        "sampled_from": min((sample.sampled_at for sample in recent_samples), default=None),
+        "sampled_to": max((sample.sampled_at for sample in recent_samples), default=None),
+        "periods": [
+            _ant_traffic_period("today", "今日", today_upload, today_download),
+            _ant_traffic_period("yesterday", "昨日", yesterday_upload, yesterday_download),
+            _ant_traffic_period("seven_days", "近 7 天", seven_upload, seven_download),
+            _ant_traffic_period("thirty_days", "近 30 天", thirty_upload, thirty_download),
+        ],
+        "trend_granularity": granularity,
+        "trend": _ant_traffic_trend(samples, start=trend_start, end=trend_end, granularity=granularity),
+    }
+
+
 def _optional_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
@@ -1667,6 +1950,18 @@ def _close_writer(writer: asyncio.StreamWriter) -> None:
         writer.close()
     except Exception:
         pass
+
+
+def _writer_peer_host(writer: asyncio.StreamWriter) -> str | None:
+    try:
+        peername = writer.get_extra_info("peername")
+    except Exception:
+        return None
+    if isinstance(peername, tuple) and peername:
+        return str(peername[0])
+    if isinstance(peername, str) and peername:
+        return peername
+    return None
 
 
 def _redact_host(value: str) -> str:

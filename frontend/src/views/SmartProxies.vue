@@ -30,17 +30,22 @@
         <el-tag :type="coreStatus.available ? 'success' : 'danger'">{{ coreStatusText(coreStatus.available) }}</el-tag>
       </el-descriptions-item>
       <el-descriptions-item label="版本">{{ coreStatus.version || '-' }}</el-descriptions-item>
-      <el-descriptions-item label="连接">{{ coreStatus.active_connections }}</el-descriptions-item>
-      <el-descriptions-item label="速率">{{ formatRate(coreStatus.upload_speed) }} / {{ formatRate(coreStatus.download_speed) }}</el-descriptions-item>
-      <el-descriptions-item label="上传">{{ formatBytes(coreStatus.upload_total) }}</el-descriptions-item>
-      <el-descriptions-item label="下载">{{ formatBytes(coreStatus.download_total) }}</el-descriptions-item>
-      <el-descriptions-item label="内存">{{ coreStatus.memory ? formatBytes(coreStatus.memory) : '-' }}</el-descriptions-item>
-      <el-descriptions-item label="状态同步">
+      <el-descriptions-item label="代理连接">{{ coreStatus.smart_proxy_active_connections }}</el-descriptions-item>
+      <el-descriptions-item label="代理速率">{{ formatRate(coreStatus.smart_proxy_upload_speed) }} / {{ formatRate(coreStatus.smart_proxy_download_speed) }}</el-descriptions-item>
+      <el-descriptions-item label="代理用量" :span="2">
+        <button class="summary-action" type="button" title="查看所有代理用量详情" @click="showTraffic()">
+          上传 {{ formatBytes(coreStatus.smart_proxy_upload_total) }} / 下载 {{ formatBytes(coreStatus.smart_proxy_download_total) }}
+        </button>
+      </el-descriptions-item>
+      <el-descriptions-item label="状态同步" :span="2">
         <el-tooltip :content="monitorStateTitle" placement="top">
-          <el-tag :type="monitorStateTag" effect="plain">{{ monitorStateLabel }}</el-tag>
+          <div class="monitor-sync-cell">
+            <span>最近 {{ monitorLastSyncText }}</span>
+            <span>下次 {{ monitorNextSyncText }}</span>
+            <el-tag size="small" :type="monitorStateTag" effect="plain">{{ monitorIntervalText }}</el-tag>
+          </div>
         </el-tooltip>
       </el-descriptions-item>
-      <el-descriptions-item label="API">{{ coreStatus.api_url || '-' }}</el-descriptions-item>
     </el-descriptions>
     <div class="mobile-summary-grid">
       <div class="mobile-summary-item">
@@ -48,20 +53,22 @@
         <strong>{{ coreStatusText(coreStatus.available) }}</strong>
       </div>
       <div class="mobile-summary-item">
-        <span>连接</span>
-        <strong>{{ coreStatus.active_connections }}</strong>
+        <span>代理连接</span>
+        <strong>{{ coreStatus.smart_proxy_active_connections }}</strong>
       </div>
       <div class="mobile-summary-item">
-        <span>上传</span>
-        <strong>{{ formatRate(coreStatus.upload_speed) }}</strong>
-      </div>
-      <div class="mobile-summary-item">
-        <span>下载</span>
-        <strong>{{ formatRate(coreStatus.download_speed) }}</strong>
+        <span>代理用量</span>
+        <button class="summary-action mobile-summary-action" type="button" title="查看所有代理用量详情" @click="showTraffic()">
+          {{ formatBytes(coreStatus.smart_proxy_upload_total) }} / {{ formatBytes(coreStatus.smart_proxy_download_total) }}
+        </button>
       </div>
       <div class="mobile-summary-item">
         <span>同步</span>
-        <strong>{{ monitorStateLabel }}</strong>
+        <div class="mobile-monitor-sync">
+          <strong>{{ monitorIntervalText }}</strong>
+          <small>最近 {{ monitorLastSyncText }}</small>
+          <small>下次 {{ monitorNextSyncText }}</small>
+        </div>
       </div>
     </div>
     <div class="table-wrap has-cards desktop-table">
@@ -79,6 +86,23 @@
       </el-table-column>
       <el-table-column label="策略" width="120">
         <template #default="{ row }">{{ strategyLabel(row.strategy, row.stability_priority) }}</template>
+      </el-table-column>
+      <el-table-column label="稳定性" width="136" class-name="table-cell-center">
+        <template #default="{ row }">
+          <button class="stability-trigger" type="button" :title="stabilityTitle(row)" @click="showStability(row)">
+            <strong>{{ stabilityScoreText(row) }}</strong>
+            <el-tag size="small" :type="stabilityTagType(row)" effect="plain">{{ row.stability_grade || '暂无数据' }}</el-tag>
+          </button>
+        </template>
+      </el-table-column>
+      <el-table-column label="用量" width="170" class-name="table-cell-center">
+        <template #default="{ row }">
+          <button class="traffic-usage-cell" type="button" title="查看代理用量详情" @click="showTraffic(row)">
+            <span>上传 {{ formatBytes(row.upload_total) }}</span>
+            <span>下载 {{ formatBytes(row.download_total) }}</span>
+            <small>{{ formatRate(row.upload_speed) }} / {{ formatRate(row.download_speed) }}</small>
+          </button>
+        </template>
       </el-table-column>
       <el-table-column label="数据来源" width="132">
         <template #default="{ row }">
@@ -177,6 +201,17 @@
           <div class="smart-proxy-mobile-summary-item">
             <span>策略</span>
             <strong>{{ strategyLabel(row.strategy, row.stability_priority) }}</strong>
+          </div>
+          <div class="smart-proxy-mobile-summary-item">
+            <span>稳定性</span>
+            <button class="stability-trigger mobile-stability-trigger" type="button" :title="stabilityTitle(row)" @click="showStability(row)">
+              <strong>{{ stabilityScoreText(row) }}</strong>
+              <el-tag size="small" :type="stabilityTagType(row)" effect="plain">{{ row.stability_grade || '暂无数据' }}</el-tag>
+            </button>
+          </div>
+          <div class="smart-proxy-mobile-summary-item">
+            <span>用量</span>
+            <strong>{{ formatBytes((row.upload_total || 0) + (row.download_total || 0)) }}</strong>
           </div>
           <div class="smart-proxy-mobile-summary-item">
             <span>数据来源</span>
@@ -863,6 +898,154 @@
     </el-table>
   </el-dialog>
 
+  <el-dialog v-model="trafficVisible" class="traffic-dialog" :title="trafficDialogTitle" width="980px">
+    <div class="traffic-toolbar">
+      <el-radio-group v-model="trafficGranularity" size="small" @change="reloadTrafficDetail">
+        <el-radio-button value="hour">按小时</el-radio-button>
+        <el-radio-button value="day">按天</el-radio-button>
+      </el-radio-group>
+      <el-button :icon="Refresh" :loading="trafficLoading" @click="reloadTrafficDetail">刷新</el-button>
+    </div>
+    <div v-loading="trafficLoading" class="traffic-content">
+      <el-empty v-if="!trafficDetail" description="暂无流量数据" :image-size="72" />
+      <template v-else>
+        <dl class="traffic-overview-grid">
+          <div>
+            <dt>总上传</dt>
+            <dd>{{ formatBytes(trafficDetail.upload_total) }}</dd>
+          </div>
+          <div>
+            <dt>总下载</dt>
+            <dd>{{ formatBytes(trafficDetail.download_total) }}</dd>
+          </div>
+          <div>
+            <dt>总用量</dt>
+            <dd>{{ formatBytes(trafficDetail.total) }}</dd>
+          </div>
+          <div>
+            <dt>当前速率</dt>
+            <dd>{{ formatRate(trafficDetail.current_upload_speed) }} / {{ formatRate(trafficDetail.current_download_speed) }}</dd>
+          </div>
+          <div>
+            <dt>峰值速率</dt>
+            <dd>{{ formatRate(trafficDetail.peak_upload_speed) }} / {{ formatRate(trafficDetail.peak_download_speed) }}</dd>
+          </div>
+          <div>
+            <dt>活跃连接</dt>
+            <dd>{{ trafficDetail.active_connections }}</dd>
+          </div>
+          <div>
+            <dt>来源 IP</dt>
+            <dd>{{ trafficDetail.source_ip_count }}</dd>
+          </div>
+          <div>
+            <dt>采样数</dt>
+            <dd>{{ trafficDetail.sample_count }}</dd>
+          </div>
+        </dl>
+        <div class="traffic-period-grid">
+          <article v-for="period in trafficDetail.periods" :key="period.key" class="traffic-period-card">
+            <strong>{{ period.label }}</strong>
+            <span>{{ formatBytes(period.total) }}</span>
+            <small>上传 {{ formatBytes(period.upload) }} / 下载 {{ formatBytes(period.download) }}</small>
+          </article>
+        </div>
+        <TrafficTrendChart :buckets="trafficDetail.trend" :granularity="trafficDetail.trend_granularity" />
+      </template>
+    </div>
+  </el-dialog>
+
+  <el-dialog v-model="stabilityVisible" class="stability-dialog" :title="`稳定性详情${selectedStabilityProxy ? ` - ${selectedStabilityProxy.name}` : ''}`" width="920px">
+    <div class="stability-toolbar">
+      <el-radio-group v-model="stabilityWindowHours" size="small" @change="reloadStabilityDetail">
+        <el-radio-button :value="12">12 小时</el-radio-button>
+        <el-radio-button :value="24">24 小时</el-radio-button>
+      </el-radio-group>
+      <el-button :icon="Refresh" :loading="stabilityLoading" @click="reloadStabilityDetail">刷新</el-button>
+    </div>
+    <div v-loading="stabilityLoading" class="stability-content">
+      <el-empty v-if="!stabilityDetail" description="暂无稳定性数据" :image-size="72" />
+      <template v-else>
+        <div class="stability-overview">
+          <div class="stability-score-panel">
+            <strong>{{ stabilityDetail.score ?? '-' }}</strong>
+            <span>{{ stabilityDetail.grade }}</span>
+            <el-tag :type="stabilitySummaryTagType(stabilityDetail)" effect="plain">置信度 {{ stabilityDetail.confidence }}</el-tag>
+          </div>
+          <dl class="stability-kpis">
+            <div>
+              <dt>可用时长</dt>
+              <dd>{{ formatDuration(stabilityDetail.available_seconds) }}</dd>
+            </div>
+            <div>
+              <dt>不可用时长</dt>
+              <dd>{{ formatDuration(stabilityDetail.unavailable_seconds) }}</dd>
+            </div>
+            <div>
+              <dt>降级时长</dt>
+              <dd>{{ formatDuration(stabilityDetail.degraded_seconds) }}</dd>
+            </div>
+            <div>
+              <dt>可用率</dt>
+              <dd>{{ formatPercent(stabilityDetail.availability_ratio) }}</dd>
+            </div>
+            <div>
+              <dt>最长连续不可用</dt>
+              <dd>{{ formatDuration(stabilityDetail.longest_unavailable_seconds) }}</dd>
+            </div>
+            <div>
+              <dt>不可用次数</dt>
+              <dd>{{ stabilityDetail.unavailable_events }} 次</dd>
+            </div>
+            <div>
+              <dt>采样覆盖</dt>
+              <dd>{{ formatPercent(stabilityDetail.coverage_ratio) }}</dd>
+            </div>
+            <div>
+              <dt>节点切换</dt>
+              <dd>{{ stabilityDetail.switch_count }} 次</dd>
+            </div>
+          </dl>
+        </div>
+        <div class="stability-metrics">
+          <article v-for="metric in stabilityDetail.metrics" :key="metric.key" class="stability-metric">
+            <div class="stability-metric-head">
+              <strong>{{ metric.label }}</strong>
+              <span>{{ metric.weight }}%</span>
+            </div>
+            <el-progress :percentage="metric.score ?? 0" :status="metricProgressStatus(metric.score)" />
+            <p>{{ metric.value }} · {{ metric.description }}</p>
+            <ul>
+              <li v-for="detail in metric.details" :key="detail">{{ detail }}</li>
+            </ul>
+          </article>
+        </div>
+        <el-table class="diagnosis-desktop-block" :data="stabilityDetail.samples" stripe max-height="280" empty-text="暂无采样明细">
+          <el-table-column prop="sampled_at" label="采样时间" width="180">
+            <template #default="{ row }">{{ formatDateTime(row.sampled_at) }}</template>
+          </el-table-column>
+          <el-table-column prop="state" label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag :type="sampleStateTag(row.state)" effect="plain">{{ row.state }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="current_node" label="当前节点" min-width="220" show-overflow-tooltip class-name="table-cell-left">
+            <template #default="{ row }">{{ row.current_node || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="在线节点" width="96">
+            <template #default="{ row }">{{ row.online_nodes }}/{{ row.runtime_nodes }}</template>
+          </el-table-column>
+          <el-table-column label="延迟" width="90">
+            <template #default="{ row }">{{ formatDelay(row.delay ?? row.average_delay) }}</template>
+          </el-table-column>
+          <el-table-column label="速率" width="150">
+            <template #default="{ row }">{{ formatRate(row.upload_speed) }} / {{ formatRate(row.download_speed) }}</template>
+          </el-table-column>
+        </el-table>
+      </template>
+    </div>
+  </el-dialog>
+
   <el-dialog v-model="healthVisible" class="diagnosis-dialog" :title="`代理诊断${selectedDiagnosisProxy ? ` - ${selectedDiagnosisProxy.name}` : ''}`" width="920px">
     <div class="diagnosis-dialog-content">
       <div class="diagnosis-guide">
@@ -1117,12 +1300,14 @@
 <script setup lang="ts">
 import { ArrowDown, ArrowUp, DataAnalysis, Delete, DocumentCopy, Edit, Lock, Plus, Refresh, Setting, Switch, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 import http from '@/api/http'
 import { useStatusSocket } from '@/composables/useStatusSocket'
 import { copyText } from '@/utils/clipboard'
 import { formatDateTime } from '@/utils/datetime'
+
+const TrafficTrendChart = defineAsyncComponent(() => import('@/components/TrafficTrendChart.vue'))
 
 interface SmartProxy {
   id: number
@@ -1168,9 +1353,22 @@ interface SmartProxy {
   config_updated_at?: string | null
   endpoint: string
   candidate_nodes: number
+  active_connections: number
+  online_users: number
+  source_ips: string[]
+  upload_total: number
+  download_total: number
+  upload_speed: number
+  download_speed: number
+  unauthorized_connections: number
   runtime_apply_error?: string | null
   apply_status?: string | null
   apply_status_reason?: string | null
+  stability_score?: number | null
+  stability_grade?: string
+  stability_confidence?: string
+  stability_window_hours?: number
+  stability_updated_at?: string | null
 }
 
 interface SmartProxyPreset {
@@ -1250,6 +1448,109 @@ interface MihomoCoreStatus {
   upload_speed: number
   memory?: number | null
   error?: string | null
+  smart_proxy_active_connections: number
+  smart_proxy_online_users: number
+  smart_proxy_upload_total: number
+  smart_proxy_download_total: number
+  smart_proxy_upload_speed: number
+  smart_proxy_download_speed: number
+}
+
+interface SmartProxyStabilityMetric {
+  key: string
+  label: string
+  score?: number | null
+  weight: number
+  value: string
+  description: string
+  details: string[]
+}
+
+interface SmartProxyStabilitySample {
+  sampled_at: string
+  status: string
+  state: string
+  current_node?: string | null
+  online_nodes: number
+  runtime_nodes: number
+  delay?: number | null
+  average_delay?: number | null
+  upload_speed: number
+  download_speed: number
+  active_connections: number
+  error?: string | null
+}
+
+interface SmartProxyStabilitySummary {
+  proxy_id: number
+  window_hours: number
+  score?: number | null
+  grade: string
+  confidence: string
+  confidence_score: number
+  sample_count: number
+  expected_samples: number
+  coverage_ratio: number
+  observed_seconds: number
+  available_seconds: number
+  degraded_seconds: number
+  unavailable_seconds: number
+  availability_ratio: number
+  longest_unavailable_seconds: number
+  unavailable_events: number
+  switch_count: number
+  switch_rate_per_hour: number
+  average_delay?: number | null
+  p95_delay?: number | null
+  delay_jitter?: number | null
+  timeout_samples: number
+  average_upload_speed: number
+  average_download_speed: number
+  max_download_speed: number
+  active_connection_sample_ratio: number
+  risk_events: number
+  sampled_from?: string | null
+  sampled_to?: string | null
+  updated_at?: string | null
+  metrics: SmartProxyStabilityMetric[]
+  samples: SmartProxyStabilitySample[]
+}
+
+interface SmartProxyTrafficPeriod {
+  key: string
+  label: string
+  upload: number
+  download: number
+  total: number
+}
+
+interface SmartProxyTrafficBucket {
+  at: string
+  label: string
+  upload: number
+  download: number
+  total: number
+}
+
+interface SmartProxyTrafficSummary {
+  scope: 'all' | 'proxy'
+  proxy_id?: number | null
+  proxy_name?: string | null
+  upload_total: number
+  download_total: number
+  total: number
+  current_upload_speed: number
+  current_download_speed: number
+  peak_upload_speed: number
+  peak_download_speed: number
+  active_connections: number
+  source_ip_count: number
+  sample_count: number
+  sampled_from?: string | null
+  sampled_to?: string | null
+  periods: SmartProxyTrafficPeriod[]
+  trend_granularity: 'hour' | 'day'
+  trend: SmartProxyTrafficBucket[]
 }
 
 interface SmartProxyStatus {
@@ -1286,6 +1587,11 @@ interface SmartProxyStatus {
   traffic_reasons: string[]
   delay?: number | null
   error?: string | null
+  stability_score?: number | null
+  stability_grade?: string
+  stability_confidence?: string
+  stability_window_hours?: number
+  stability_updated_at?: string | null
 }
 
 interface SmartProxyMonitorState {
@@ -1411,6 +1717,12 @@ const coreStatus = reactive<MihomoCoreStatus>({
   upload_speed: 0,
   memory: null,
   error: null,
+  smart_proxy_active_connections: 0,
+  smart_proxy_online_users: 0,
+  smart_proxy_upload_total: 0,
+  smart_proxy_download_total: 0,
+  smart_proxy_upload_speed: 0,
+  smart_proxy_download_speed: 0,
 })
 const monitorState = reactive<SmartProxyMonitorState>({
   enabled: false,
@@ -1432,14 +1744,24 @@ const dialogVisible = ref(false)
 const runtimeVisible = ref(false)
 const healthVisible = ref(false)
 const healthLogsVisible = ref(false)
+const stabilityVisible = ref(false)
+const trafficVisible = ref(false)
 const globalConfigVisible = ref(false)
 const runtimeContent = ref('')
 const selectedStatus = ref<SmartProxyStatus | null>(null)
 const selectedHealth = ref<SmartProxyHealthResult | null>(null)
 const healthLogs = ref<SmartProxyHealthLog[]>([])
+const stabilityDetail = ref<SmartProxyStabilitySummary | null>(null)
+const stabilityLoading = ref(false)
+const stabilityWindowHours = ref<12 | 24>(24)
+const trafficDetail = ref<SmartProxyTrafficSummary | null>(null)
+const trafficLoading = ref(false)
+const trafficGranularity = ref<'hour' | 'day'>('hour')
 const switchLogsVisible = ref(false)
 const switchLogs = ref<SmartProxySwitchLog[]>([])
 const selectedSwitchProxy = ref<SmartProxy | null>(null)
+const selectedStabilityProxy = ref<SmartProxy | null>(null)
+const selectedTrafficProxy = ref<SmartProxy | null>(null)
 const selectedDiagnosisProxy = ref<SmartProxy | null>(null)
 const checkingId = ref<number | null>(null)
 const diagnosisMode = ref<'status' | 'health' | 'all' | null>(null)
@@ -1564,6 +1886,7 @@ const effectiveTrafficConfig = computed(() => ({
   expire_soon_days: form.use_global_traffic_policy ? globalConfig.expire_soon_days : Number(form.expire_soon_days || 0),
   exclude_unknown_traffic: form.use_global_traffic_policy ? globalConfig.exclude_unknown_traffic : Boolean(form.exclude_unknown_traffic),
 }))
+const trafficDialogTitle = computed(() => (selectedTrafficProxy.value ? `流量详情 - ${selectedTrafficProxy.value.name}` : '流量详情 - 所有代理'))
 const isAntSource = computed(() => form.data_source === 'ant')
 const selectedManualNodeIds = computed<NodeKey[]>(() => (isAntSource.value ? antNodeIds.value : nodeIds.value))
 const selectedStrategyNodeIds = computed<NodeKey[]>(() => (isAntSource.value ? antStrategyNodeIds.value : strategyNodeIds.value))
@@ -1931,6 +2254,21 @@ const monitorStateLabel = computed(() => {
   return `每 ${monitorState.interval_minutes} 分钟`
 })
 
+const monitorLastSyncText = computed(() => {
+  if (!monitorState.enabled) return '-'
+  return monitorState.last_sync_at ? formatDateTime(monitorState.last_sync_at) : '尚未同步'
+})
+
+const monitorNextSyncText = computed(() => {
+  if (!monitorState.enabled) return '-'
+  return monitorState.next_sync_at ? formatDateTime(monitorState.next_sync_at) : '等待调度'
+})
+
+const monitorIntervalText = computed(() => {
+  if (!monitorState.enabled) return '已关闭'
+  return monitorState.interval_minutes > 0 ? `每 ${monitorState.interval_minutes} 分钟` : '手动同步'
+})
+
 const monitorStateTag = computed(() => {
   if (!monitorState.enabled) return 'info'
   if (monitorState.due) return 'warning'
@@ -2026,6 +2364,59 @@ function runtimeStatusLabel(row: SmartProxy) {
 
 function runtimeStatusTag(row: SmartProxy) {
   return statusTag(row.enabled ? row.status : 'stopped')
+}
+
+function stabilityScoreText(row: SmartProxy) {
+  return row.stability_score === null || row.stability_score === undefined ? '-' : `${row.stability_score}`
+}
+
+function stabilityTagType(row: SmartProxy) {
+  return stabilityScoreType(row.stability_score)
+}
+
+function stabilitySummaryTagType(summary: SmartProxyStabilitySummary) {
+  return stabilityScoreType(summary.score)
+}
+
+function stabilityScoreType(score?: number | null): 'success' | 'warning' | 'danger' | 'info' {
+  if (score === null || score === undefined) return 'info'
+  if (score >= 75) return 'success'
+  if (score >= 60) return 'warning'
+  return 'danger'
+}
+
+function stabilityTitle(row: SmartProxy) {
+  if (row.stability_score === null || row.stability_score === undefined) {
+    return '暂无稳定性采样数据'
+  }
+  const updated = row.stability_updated_at ? `，最近采样 ${formatDateTime(row.stability_updated_at)}` : ''
+  return `最近 ${row.stability_window_hours || 24} 小时稳定性 ${row.stability_score} 分，${row.stability_grade || '未知'}，置信度 ${row.stability_confidence || '低'}${updated}`
+}
+
+function metricProgressStatus(score?: number | null): 'success' | 'warning' | 'exception' | undefined {
+  if (score === null || score === undefined) return undefined
+  if (score >= 75) return 'success'
+  if (score >= 60) return 'warning'
+  return 'exception'
+}
+
+function sampleStateTag(value?: string | null): 'success' | 'warning' | 'danger' | 'info' {
+  if (value === '可用') return 'success'
+  if (value === '降级') return 'warning'
+  if (value === '不可用') return 'danger'
+  return 'info'
+}
+
+function formatDuration(seconds?: number | null) {
+  const total = Math.max(0, Math.round(Number(seconds || 0)))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  if (hours > 0) return `${hours}小时${minutes}分钟`
+  return `${minutes}分钟`
+}
+
+function formatPercent(value?: number | null) {
+  return `${Math.max(0, Math.min(100, Number(value || 0) * 100)).toFixed(1)}%`
 }
 
 function parseDateTime(value?: string | null) {
@@ -2351,6 +2742,19 @@ function applySmartProxyStatus(data: SmartProxyStatus) {
   target.state_synced = data.state_synced
   target.switch_count = data.switch_count
   target.candidate_nodes = data.candidate_nodes
+  target.active_connections = data.active_connections
+  target.online_users = data.online_users
+  target.source_ips = data.source_ips
+  target.upload_total = data.upload_total
+  target.download_total = data.download_total
+  target.upload_speed = data.upload_speed
+  target.download_speed = data.download_speed
+  target.unauthorized_connections = data.unauthorized_connections
+  target.stability_score = data.stability_score
+  target.stability_grade = data.stability_grade
+  target.stability_confidence = data.stability_confidence
+  target.stability_window_hours = data.stability_window_hours
+  target.stability_updated_at = data.stability_updated_at
 }
 
 const { connect: connectStatusSocket, stop: stopStatusSocket } = useStatusSocket((message) => {
@@ -2918,16 +3322,7 @@ async function saveGlobalConfig() {
 async function loadProxyStatus(row: SmartProxy) {
   const { data } = await http.get(`/smart-proxies/${row.id}/status`, { params: { delay: true, sync: true } })
   selectedStatus.value = data
-  const target = items.value.find((item) => item.id === row.id)
-  if (target) {
-    target.status = data.status
-    target.last_error = data.error
-    target.current_node = data.current_node
-    target.mihomo_current_node = data.mihomo_current_node
-    target.state_synced = data.state_synced
-    target.switch_count = data.switch_count
-    target.candidate_nodes = data.candidate_nodes
-  }
+  applySmartProxyStatus(data)
   return data as SmartProxyStatus
 }
 
@@ -2936,6 +3331,74 @@ async function showSwitchLogs(row: SmartProxy) {
   const { data } = await http.get(`/smart-proxies/${row.id}/switch-logs`, { params: { limit: 100 } })
   switchLogs.value = data
   switchLogsVisible.value = true
+}
+
+async function showTraffic(row?: SmartProxy) {
+  selectedTrafficProxy.value = row || null
+  trafficGranularity.value = 'hour'
+  trafficVisible.value = true
+  await loadTrafficDetail()
+}
+
+async function loadTrafficDetail() {
+  const row = selectedTrafficProxy.value
+  trafficLoading.value = true
+  try {
+    const endpoint = row ? `/smart-proxies/${row.id}/traffic` : '/smart-proxies/traffic'
+    const { data } = await http.get(endpoint, { params: { granularity: trafficGranularity.value } })
+    trafficDetail.value = data
+    if (row) {
+      row.upload_total = data.upload_total
+      row.download_total = data.download_total
+      row.upload_speed = data.current_upload_speed
+      row.download_speed = data.current_download_speed
+      row.active_connections = data.active_connections
+      row.online_users = data.source_ip_count
+    } else {
+      coreStatus.smart_proxy_upload_total = data.upload_total
+      coreStatus.smart_proxy_download_total = data.download_total
+      coreStatus.smart_proxy_upload_speed = data.current_upload_speed
+      coreStatus.smart_proxy_download_speed = data.current_download_speed
+      coreStatus.smart_proxy_active_connections = data.active_connections
+      coreStatus.smart_proxy_online_users = data.source_ip_count
+    }
+  } finally {
+    trafficLoading.value = false
+  }
+}
+
+function reloadTrafficDetail() {
+  loadTrafficDetail()
+}
+
+async function showStability(row: SmartProxy) {
+  selectedStabilityProxy.value = row
+  stabilityWindowHours.value = 24
+  stabilityVisible.value = true
+  await loadStabilityDetail()
+}
+
+async function loadStabilityDetail() {
+  const row = selectedStabilityProxy.value
+  if (!row) return
+  stabilityLoading.value = true
+  try {
+    const { data } = await http.get(`/smart-proxies/${row.id}/stability`, {
+      params: { window_hours: stabilityWindowHours.value },
+    })
+    stabilityDetail.value = data
+    row.stability_score = data.score
+    row.stability_grade = data.grade
+    row.stability_confidence = data.confidence
+    row.stability_window_hours = data.window_hours
+    row.stability_updated_at = data.updated_at
+  } finally {
+    stabilityLoading.value = false
+  }
+}
+
+function reloadStabilityDetail() {
+  loadStabilityDetail()
 }
 
 function openDiagnosis(row: SmartProxy) {
@@ -3091,6 +3554,340 @@ onBeforeUnmount(() => {
   padding: 0;
   font-size: 12px;
   line-height: 1.35;
+}
+
+.stability-trigger {
+  display: inline-grid;
+  min-width: 88px;
+  max-width: 100%;
+  grid-template-columns: auto auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.stability-trigger:hover {
+  background: var(--el-fill-color-light);
+}
+
+.stability-trigger strong {
+  color: var(--heading);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.summary-action {
+  max-width: 100%;
+  border: 0;
+  border-radius: 6px;
+  padding: 2px 6px;
+  background: transparent;
+  color: var(--accent-hover);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+.summary-action:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-hover);
+}
+
+.mobile-summary-action {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-sync-cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.monitor-sync-cell span {
+  min-width: 0;
+  color: var(--el-text-color-primary);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.monitor-sync-cell :deep(.el-tag) {
+  flex: 0 0 auto;
+}
+
+.mobile-monitor-sync {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.mobile-monitor-sync strong,
+.mobile-monitor-sync small {
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-monitor-sync small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.traffic-usage-cell {
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 3px;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: center;
+}
+
+.traffic-usage-cell:hover {
+  background: var(--el-fill-color-light);
+}
+
+.traffic-usage-cell span {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--heading);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traffic-usage-cell small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traffic-content {
+  min-width: 0;
+}
+
+:global(.traffic-dialog .el-dialog__body),
+:global(.stability-dialog .el-dialog__body) {
+  padding-top: 18px;
+}
+
+.traffic-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.traffic-overview-grid,
+.traffic-period-grid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.traffic-overview-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 0;
+}
+
+.traffic-period-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.traffic-overview-grid div,
+.traffic-period-card {
+  min-width: 0;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.traffic-overview-grid div,
+.traffic-period-card {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.traffic-overview-grid dt,
+.traffic-overview-grid dd {
+  margin: 0;
+}
+
+.traffic-overview-grid dt,
+.traffic-period-card small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.traffic-overview-grid dd,
+.traffic-period-card span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--heading);
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traffic-period-card strong {
+  color: var(--heading);
+  font-size: 14px;
+}
+
+.stability-content {
+  min-width: 0;
+}
+
+.stability-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stability-overview {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.stability-score-panel {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  min-height: 146px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.stability-score-panel strong {
+  color: var(--heading);
+  font-size: 42px;
+  line-height: 1;
+}
+
+.stability-score-panel span {
+  color: var(--el-text-color-primary);
+  font-weight: 650;
+}
+
+.stability-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.stability-kpis div,
+.stability-metric {
+  min-width: 0;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.stability-kpis div {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.stability-kpis dt,
+.stability-metric p,
+.stability-metric li {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.stability-kpis dt,
+.stability-kpis dd {
+  margin: 0;
+}
+
+.stability-kpis dd {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--el-text-color-primary);
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stability-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.stability-metric {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.stability-metric-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.stability-metric-head strong {
+  min-width: 0;
+  color: var(--heading);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.stability-metric-head span {
+  flex: 0 0 auto;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.stability-metric p {
+  margin: 0;
+}
+
+.stability-metric ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 16px;
 }
 
 :global(.smart-proxy-dialog .el-dialog__header) {
@@ -4002,6 +4799,65 @@ onBeforeUnmount(() => {
     grid-column: 1 / -1;
   }
 
+  :global(.stability-dialog),
+  :global(.traffic-dialog) {
+    width: calc(100% - 24px) !important;
+  }
+
+  .traffic-toolbar,
+  .stability-toolbar,
+  .stability-overview {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .traffic-toolbar,
+  .stability-toolbar {
+    display: grid;
+    gap: 10px;
+  }
+
+  .traffic-toolbar :deep(.el-button),
+  .traffic-toolbar :deep(.el-radio-group),
+  .stability-toolbar :deep(.el-button),
+  .stability-toolbar :deep(.el-radio-group) {
+    width: 100%;
+  }
+
+  .traffic-toolbar :deep(.el-radio-button),
+  .stability-toolbar :deep(.el-radio-button) {
+    flex: 1 1 0;
+  }
+
+  .traffic-toolbar :deep(.el-radio-button__inner),
+  .stability-toolbar :deep(.el-radio-button__inner) {
+    width: 100%;
+  }
+
+  .traffic-overview-grid,
+  .traffic-period-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stability-score-panel {
+    min-height: 118px;
+  }
+
+  .stability-kpis,
+  .stability-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stability-metric {
+    grid-column: 1 / -1;
+  }
+
+  .mobile-stability-trigger {
+    min-width: 0;
+    justify-content: start;
+    padding: 0;
+  }
+
   .diagnosis-guide {
     grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
@@ -4251,6 +5107,12 @@ onBeforeUnmount(() => {
   }
 
   .diagnosis-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .traffic-overview-grid,
+  .traffic-period-grid,
+  .stability-kpis {
     grid-template-columns: minmax(0, 1fr);
   }
 

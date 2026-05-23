@@ -9,6 +9,7 @@ from app.core.timezone import CHINA_TZ, as_china, now_china
 from app.models.subscription import Subscription
 from app.services.aggregator import refresh_subscription_source
 from app.services.audit import write_audit
+from app.services.history_cleanup import cleanup_history_data
 from app.services.settings import (
     get_ant_proxy_auto_refresh_enabled,
     get_ant_proxy_auto_refresh_interval_minutes,
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=CHINA_TZ)
 last_ant_proxy_refresh_attempt_at: datetime | None = None
 last_smart_proxy_apply_at: datetime | None = None
+last_history_cleanup_at: datetime | None = None
 
 
 def _as_china(value: datetime) -> datetime:
@@ -161,7 +163,7 @@ async def refresh_ant_proxy_by_setting() -> None:
 async def persist_ant_proxy_traffic() -> None:
     async with AsyncSessionLocal() as session:
         try:
-            await ant_proxy_service.persist_traffic_totals(session)
+            await ant_proxy_service.record_traffic_sample_if_due(session)
         except Exception as exc:
             logger.info("Scheduled Ant proxy traffic persistence skipped: %s", exc)
 
@@ -225,6 +227,22 @@ async def monitor_smart_proxy_by_setting() -> None:
             logger.info("Scheduled smart proxy monitor skipped: %s", exc)
 
 
+async def cleanup_history_by_setting() -> None:
+    global last_history_cleanup_at
+    now = now_china()
+    if last_history_cleanup_at and now - last_history_cleanup_at < timedelta(hours=24):
+        return
+    async with AsyncSessionLocal() as session:
+        try:
+            result = await cleanup_history_data(session, actor="system", write_log=True)
+            if result.get("total_deleted", 0):
+                await session.commit()
+            last_history_cleanup_at = now
+        except Exception as exc:
+            await session.rollback()
+            logger.info("Scheduled history cleanup skipped: %s", exc)
+
+
 async def maintenance_tick() -> None:
     steps = (
         refresh_enabled_subscriptions,
@@ -233,6 +251,7 @@ async def maintenance_tick() -> None:
         persist_ant_proxy_traffic,
         apply_smart_proxy_by_setting,
         monitor_smart_proxy_by_setting,
+        cleanup_history_by_setting,
     )
     for step in steps:
         try:

@@ -7,7 +7,18 @@ from app.models.config_template import ConfigTemplate
 from app.models.rule_template import RuleTemplate
 from app.models.system_setting import SystemSetting
 from app.models.user import User
-from app.services.settings import public_host_base_from_base_url
+from app.services.settings import (
+    HISTORY_CLEANUP_RETENTION_DAYS_KEY,
+    HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS_KEY,
+    HISTORY_RETENTION_AUDIT_LOG_DAYS_KEY,
+    HISTORY_RETENTION_NODE_SNAPSHOT_DAYS_KEY,
+    HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS_KEY,
+    HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS_KEY,
+    HISTORY_RETENTION_SMART_PROXY_SWITCH_LOG_DAYS_KEY,
+    HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS_KEY,
+    HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS_KEY,
+    public_host_base_from_base_url,
+)
 
 
 async def bootstrap_defaults(session: AsyncSession) -> None:
@@ -49,6 +60,13 @@ async def bootstrap_defaults(session: AsyncSession) -> None:
     legacy_public_base_url = await session.scalar(select(SystemSetting).where(SystemSetting.key == "public_base_url"))
     legacy_public_base_url_value = legacy_public_base_url.value if legacy_public_base_url is not None else ""
     legacy_proxy_public_base_url_value = public_host_base_from_base_url(legacy_public_base_url_value)
+    legacy_history_retention = await session.scalar(
+        select(SystemSetting).where(SystemSetting.key == HISTORY_CLEANUP_RETENTION_DAYS_KEY)
+    )
+    legacy_history_retention_value = legacy_history_retention.value if legacy_history_retention is not None else None
+
+    def history_retention_default(value: int) -> str:
+        return str(legacy_history_retention_value or value)
 
     defaults = {
         "redis_url": (settings.REDIS_URL, False, "Redis connection URL"),
@@ -68,6 +86,51 @@ async def bootstrap_defaults(session: AsyncSession) -> None:
         "cache_ttl_seconds": (str(settings.CACHE_TTL_SECONDS), False, "Final config cache TTL"),
         "node_filter_patterns": ("", False, "Comma-separated wildcard patterns used to skip pseudo nodes by name"),
         "traffic_poll_interval_minutes": ("30", False, "Subscription traffic polling interval in minutes; 0 disables it"),
+        HISTORY_CLEANUP_RETENTION_DAYS_KEY: (
+            str(settings.HISTORY_CLEANUP_RETENTION_DAYS),
+            False,
+            "Legacy global history data retention in days; hidden when category retention settings exist",
+        ),
+        HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS_KEY: (
+            history_retention_default(settings.HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS),
+            False,
+            "Smart proxy traffic sample retention in days; 0 disables cleanup",
+        ),
+        HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS_KEY: (
+            history_retention_default(settings.HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS),
+            False,
+            "Ant proxy traffic sample retention in days; 0 disables cleanup",
+        ),
+        HISTORY_RETENTION_AUDIT_LOG_DAYS_KEY: (
+            history_retention_default(settings.HISTORY_RETENTION_AUDIT_LOG_DAYS),
+            False,
+            "Audit log retention in days; 0 disables cleanup",
+        ),
+        HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS_KEY: (
+            history_retention_default(settings.HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS),
+            False,
+            "Subscription traffic snapshot retention in days; 0 disables cleanup",
+        ),
+        HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS_KEY: (
+            history_retention_default(settings.HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS),
+            False,
+            "Smart proxy stability sample retention in days; 0 disables cleanup",
+        ),
+        HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS_KEY: (
+            history_retention_default(settings.HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS),
+            False,
+            "Smart proxy health log retention in days; 0 disables cleanup",
+        ),
+        HISTORY_RETENTION_SMART_PROXY_SWITCH_LOG_DAYS_KEY: (
+            history_retention_default(settings.HISTORY_RETENTION_SMART_PROXY_SWITCH_LOG_DAYS),
+            False,
+            "Smart proxy switch log retention in days; 0 disables cleanup",
+        ),
+        HISTORY_RETENTION_NODE_SNAPSHOT_DAYS_KEY: (
+            history_retention_default(settings.HISTORY_RETENTION_NODE_SNAPSHOT_DAYS),
+            False,
+            "Node conversion snapshot retention in days; 0 disables cleanup",
+        ),
         "ant_proxy_auto_refresh_enabled": (
             "true" if settings.ANT_PROXY_AUTO_REFRESH_ENABLED else "false",
             False,

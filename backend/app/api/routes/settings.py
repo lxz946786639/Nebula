@@ -13,8 +13,22 @@ from app.models.system_setting import SystemSetting
 from app.schemas.common import HealthStatus
 from app.schemas.settings import SettingBulkUpdate, SettingRead
 from app.services.audit import write_audit
+from app.services.history_cleanup import cleanup_history_data
 from app.services.node_pool import sync_node_pool_background
-from app.services.settings import get_subconverter_url
+from app.services.settings import (
+    DEFAULT_HISTORY_CLEANUP_RETENTION_DAYS,
+    HISTORY_CLEANUP_RETENTION_DAYS_KEY,
+    HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS_KEY,
+    HISTORY_RETENTION_AUDIT_LOG_DAYS_KEY,
+    HISTORY_RETENTION_NODE_SNAPSHOT_DAYS_KEY,
+    HISTORY_RETENTION_SETTING_KEYS,
+    HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS_KEY,
+    HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS_KEY,
+    HISTORY_RETENTION_SMART_PROXY_SWITCH_LOG_DAYS_KEY,
+    HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS_KEY,
+    HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS_KEY,
+    get_subconverter_url,
+)
 from app.services.smart_proxy import refresh_smart_proxy_statuses_if_due
 from app.services.subconverter import SubconverterClient
 
@@ -22,7 +36,7 @@ from app.services.subconverter import SubconverterClient
 router = APIRouter()
 logger = logging.getLogger(__name__)
 SMART_PROXY_SETTING_PREFIXES = ("smart_proxy_", "mihomo_")
-HIDDEN_SETTING_KEYS = {"redis_url", "public_base_url"}
+HIDDEN_SETTING_KEYS = {"redis_url", "public_base_url", HISTORY_CLEANUP_RETENTION_DAYS_KEY}
 DEVELOPMENT_READ_ONLY_SETTING_KEYS = {"subconverter_url", "mihomo_api_url", "mihomo_api_secret"}
 SETTING_SCOPES = {
     "system": (
@@ -32,6 +46,14 @@ SETTING_SCOPES = {
         "mihomo_api_url",
         "mihomo_api_secret",
         "acl4ssr_config_url",
+        HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS_KEY,
+        HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS_KEY,
+        HISTORY_RETENTION_AUDIT_LOG_DAYS_KEY,
+        HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS_KEY,
+        HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS_KEY,
+        HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS_KEY,
+        HISTORY_RETENTION_SMART_PROXY_SWITCH_LOG_DAYS_KEY,
+        HISTORY_RETENTION_NODE_SNAPSHOT_DAYS_KEY,
     ),
     "subscription": ("subscription_token", "cache_ttl_seconds", "traffic_poll_interval_minutes"),
     "node_pool": ("node_filter_patterns",),
@@ -55,6 +77,15 @@ SETTING_LABELS = {
     "cache_ttl_seconds": "缓存有效期",
     "node_filter_patterns": "节点过滤通配符",
     "traffic_poll_interval_minutes": "流量刷新频率",
+    HISTORY_CLEANUP_RETENTION_DAYS_KEY: "历史数据保留天数",
+    HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS_KEY: "智能代理流量保留天数",
+    HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS_KEY: "蚂蚁流量保留天数",
+    HISTORY_RETENTION_AUDIT_LOG_DAYS_KEY: "日志中心保留天数",
+    HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS_KEY: "订阅流量快照保留天数",
+    HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS_KEY: "智能代理稳定性保留天数",
+    HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS_KEY: "健康检测日志保留天数",
+    HISTORY_RETENTION_SMART_PROXY_SWITCH_LOG_DAYS_KEY: "节点切换历史保留天数",
+    HISTORY_RETENTION_NODE_SNAPSHOT_DAYS_KEY: "节点转换快照保留天数",
 }
 SECRET_KEYWORDS = ("password", "secret", "token")
 
@@ -135,6 +166,24 @@ def _assert_read_only_settings_unchanged(
             raise HTTPException(status_code=400, detail=f"{label} 在本地开发环境中由环境变量控制，不能在系统设置中修改")
 
 
+def _normalize_history_retention_settings(payload: SettingBulkUpdate) -> None:
+    for key in set(payload.settings) & set(HISTORY_RETENTION_SETTING_KEYS):
+        raw_value = payload.settings[key]
+        text = str(raw_value or "").strip()
+        if not text:
+            payload.settings[key] = str(DEFAULT_HISTORY_CLEANUP_RETENTION_DAYS)
+            continue
+        try:
+            days = int(text)
+        except ValueError as exc:
+            label = SETTING_LABELS.get(key, key)
+            raise HTTPException(status_code=400, detail=f"{label}必须是整数") from exc
+        if days < 0 or days > 3650:
+            label = SETTING_LABELS.get(key, key)
+            raise HTTPException(status_code=400, detail=f"{label}必须在 0 到 3650 天之间")
+        payload.settings[key] = str(days)
+
+
 async def _refresh_smart_proxy_statuses_background(actor: str) -> None:
     async with AsyncSessionLocal() as session:
         try:
@@ -154,6 +203,16 @@ async def _refresh_smart_proxy_statuses_background(actor: str) -> None:
             await session.commit()
         except Exception as exc:
             logger.info("Smart proxy status refresh after settings change skipped: %s", exc)
+
+
+async def _cleanup_history_background(actor: str) -> None:
+    async with AsyncSessionLocal() as session:
+        try:
+            await cleanup_history_data(session, actor=actor, write_log=True)
+            await session.commit()
+        except Exception as exc:
+            await session.rollback()
+            logger.info("History cleanup after settings change skipped: %s", exc)
 
 
 async def _validate_connection_changes(
@@ -239,6 +298,7 @@ async def update_settings(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> list[SettingRead]:
+    _normalize_history_retention_settings(payload)
     keys = set(payload.settings)
     keys.update({"subconverter_url", "mihomo_api_url", "mihomo_api_secret"})
     items = (await session.scalars(select(SystemSetting).where(SystemSetting.key.in_(keys)))).all()
@@ -286,6 +346,8 @@ async def update_settings(
             actor=current_user.username,
             reason="节点过滤配置变更后同步",
         )
+    if set(changed_keys) & set(HISTORY_RETENTION_SETTING_KEYS):
+        background_tasks.add_task(_cleanup_history_background, current_user.username)
     return await _setting_reads(session)
 
 

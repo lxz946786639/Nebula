@@ -90,9 +90,22 @@ class SmartProxyRead(SmartProxyBase):
     updated_at: datetime
     endpoint: str = ""
     candidate_nodes: int = 0
+    active_connections: int = 0
+    online_users: int = 0
+    source_ips: list[str] = Field(default_factory=list)
+    upload_total: int = 0
+    download_total: int = 0
+    upload_speed: int = 0
+    download_speed: int = 0
+    unauthorized_connections: int = 0
     runtime_apply_error: str | None = None
     apply_status: str = "pending"
     apply_status_reason: str | None = None
+    stability_score: int | None = None
+    stability_grade: str = "暂无数据"
+    stability_confidence: str = "低"
+    stability_window_hours: int = 24
+    stability_updated_at: datetime | None = None
 
 
 class SmartProxyRuntime(BaseModel):
@@ -221,6 +234,12 @@ class MihomoCoreStatus(BaseModel):
     upload_speed: int = 0
     memory: int | None = None
     error: str | None = None
+    smart_proxy_active_connections: int = 0
+    smart_proxy_online_users: int = 0
+    smart_proxy_upload_total: int = 0
+    smart_proxy_download_total: int = 0
+    smart_proxy_upload_speed: int = 0
+    smart_proxy_download_speed: int = 0
 
 
 class SmartProxyStatus(BaseModel):
@@ -258,6 +277,108 @@ class SmartProxyStatus(BaseModel):
     delay: int | None = None
     history: list[dict] = Field(default_factory=list)
     error: str | None = None
+    stability_score: int | None = None
+    stability_grade: str = "暂无数据"
+    stability_confidence: str = "低"
+    stability_window_hours: int = 24
+    stability_updated_at: datetime | None = None
+
+
+class SmartProxyStabilityMetric(BaseModel):
+    key: str
+    label: str
+    score: int | None = None
+    weight: int
+    value: str
+    description: str
+    details: list[str] = Field(default_factory=list)
+
+
+class SmartProxyStabilitySampleRead(BaseModel):
+    sampled_at: datetime
+    status: str
+    state: str
+    current_node: str | None = None
+    online_nodes: int = 0
+    runtime_nodes: int = 0
+    delay: int | None = None
+    average_delay: int | None = None
+    upload_speed: int = 0
+    download_speed: int = 0
+    active_connections: int = 0
+    error: str | None = None
+
+
+class SmartProxyStabilitySummary(BaseModel):
+    proxy_id: int
+    window_hours: int = 24
+    score: int | None = None
+    grade: str = "暂无数据"
+    confidence: str = "低"
+    confidence_score: int = 0
+    sample_count: int = 0
+    expected_samples: int = 0
+    coverage_ratio: float = 0
+    observed_seconds: int = 0
+    available_seconds: int = 0
+    degraded_seconds: int = 0
+    unavailable_seconds: int = 0
+    availability_ratio: float = 0
+    longest_unavailable_seconds: int = 0
+    unavailable_events: int = 0
+    switch_count: int = 0
+    switch_rate_per_hour: float = 0
+    average_delay: int | None = None
+    p95_delay: int | None = None
+    delay_jitter: int | None = None
+    timeout_samples: int = 0
+    average_upload_speed: int = 0
+    average_download_speed: int = 0
+    max_download_speed: int = 0
+    active_connection_sample_ratio: float = 0
+    risk_events: int = 0
+    sampled_from: datetime | None = None
+    sampled_to: datetime | None = None
+    updated_at: datetime | None = None
+    metrics: list[SmartProxyStabilityMetric] = Field(default_factory=list)
+    samples: list[SmartProxyStabilitySampleRead] = Field(default_factory=list)
+
+
+class SmartProxyTrafficPeriod(BaseModel):
+    key: str
+    label: str
+    upload: int = 0
+    download: int = 0
+    total: int = 0
+
+
+class SmartProxyTrafficBucket(BaseModel):
+    at: datetime
+    label: str
+    upload: int = 0
+    download: int = 0
+    total: int = 0
+
+
+class SmartProxyTrafficSummary(BaseModel):
+    scope: str = "all"
+    proxy_id: int | None = None
+    proxy_name: str | None = None
+    upload_total: int = 0
+    download_total: int = 0
+    total: int = 0
+    current_upload_speed: int = 0
+    current_download_speed: int = 0
+    peak_upload_speed: int = 0
+    peak_download_speed: int = 0
+    active_connections: int = 0
+    source_ip_count: int = 0
+    sample_count: int = 0
+    sampled_from: datetime | None = None
+    sampled_to: datetime | None = None
+    periods: list[SmartProxyTrafficPeriod] = Field(default_factory=list)
+    trend_granularity: str = "hour"
+    trend: list[SmartProxyTrafficBucket] = Field(default_factory=list)
 
 
 class SmartProxyAccessViolation(BaseModel):

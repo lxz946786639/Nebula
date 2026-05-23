@@ -1,14 +1,15 @@
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import aiohttp
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.timezone import CHINA_TZ
+from app.core.timezone import CHINA_TZ, now_china
 from app.models.subscription import Subscription
 from app.models.traffic_snapshot import TrafficSnapshot
+from app.services.settings import HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS_KEY, get_history_retention_days
 from app.utils.network import validate_subscription_url
 
 
@@ -176,10 +177,17 @@ async def collect_enabled_subscription_traffic(session: AsyncSession) -> list[Su
     return await collect_traffic(list(enabled_items))
 
 
-async def prune_traffic_snapshots(session: AsyncSession, *, keep: int = 100) -> None:
-    ids = list((await session.scalars(select(TrafficSnapshot.id).order_by(TrafficSnapshot.id.desc()).offset(keep))).all())
-    if ids:
-        await session.execute(delete(TrafficSnapshot).where(TrafficSnapshot.id.in_(ids)))
+async def prune_traffic_snapshots(session: AsyncSession, *, keep_days: int | None = None) -> None:
+    retention_days = (
+        keep_days
+        if keep_days is not None
+        else await get_history_retention_days(session, HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS_KEY)
+    )
+    retention_days = max(int(retention_days or 0), 0)
+    if retention_days <= 0:
+        return
+    cutoff = now_china() - timedelta(days=retention_days)
+    await session.execute(delete(TrafficSnapshot).where(TrafficSnapshot.created_at < cutoff))
 
 
 async def poll_traffic_snapshot(session: AsyncSession) -> TrafficSnapshot:

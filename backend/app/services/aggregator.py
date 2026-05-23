@@ -1,4 +1,5 @@
 import hashlib
+from datetime import timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +11,12 @@ from app.models.node_snapshot import NodeSnapshot
 from app.models.subscription import Subscription
 from app.services.node_pool import sync_node_pool
 from app.services.node_processor import process_clash_yaml
-from app.services.settings import get_cache_ttl, get_subconverter_url
+from app.services.settings import (
+    HISTORY_RETENTION_NODE_SNAPSHOT_DAYS_KEY,
+    get_cache_ttl,
+    get_history_retention_days,
+    get_subconverter_url,
+)
 from app.services.subconverter import ConvertRequest, SubconverterClient, SubconverterError, Target
 from app.utils.network import validate_subscription_url
 
@@ -93,10 +99,17 @@ async def convert_subscription(
     return converted, nodes
 
 
-async def prune_node_snapshots(session: AsyncSession, *, keep: int = 200) -> None:
-    ids = list((await session.scalars(select(NodeSnapshot.id).order_by(NodeSnapshot.id.desc()).offset(keep))).all())
-    if ids:
-        await session.execute(delete(NodeSnapshot).where(NodeSnapshot.id.in_(ids)))
+async def prune_node_snapshots(session: AsyncSession, *, keep_days: int | None = None) -> None:
+    retention_days = (
+        keep_days
+        if keep_days is not None
+        else await get_history_retention_days(session, HISTORY_RETENTION_NODE_SNAPSHOT_DAYS_KEY)
+    )
+    retention_days = max(int(retention_days or 0), 0)
+    if retention_days <= 0:
+        return
+    cutoff = now_china() - timedelta(days=retention_days)
+    await session.execute(delete(NodeSnapshot).where(NodeSnapshot.created_at < cutoff))
 
 
 async def refresh_subscription_source(

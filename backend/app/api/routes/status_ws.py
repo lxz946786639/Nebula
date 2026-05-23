@@ -17,6 +17,8 @@ from app.services.settings import get_proxy_public_base_url, get_subconverter_ur
 from app.services.smart_proxy import (
     mihomo_core_status,
     refresh_smart_proxy_statuses_if_due,
+    smart_proxy_module_status,
+    smart_proxy_stability_overview,
     smart_proxy_runtime_status,
 )
 from app.services.subconverter import SubconverterClient
@@ -124,7 +126,7 @@ async def _dashboard_payload() -> dict[str, Any]:
 async def _smart_proxies_payload() -> dict[str, Any]:
     async with AsyncSessionLocal() as session:
         monitor = await refresh_smart_proxy_statuses_if_due(session)
-        core = await mihomo_core_status(session)
+        core = await smart_proxy_module_status(session)
         proxies = list((await session.scalars(select(SmartProxy).order_by(SmartProxy.id.asc()))).all())
         statuses: list[dict[str, Any]] = []
         for proxy in proxies:
@@ -133,6 +135,7 @@ async def _smart_proxies_payload() -> dict[str, Any]:
             status["switch_count"] = proxy.switch_count or 0
             status["current_node"] = proxy.current_node or status.get("mihomo_current_node")
             status["state_synced"] = not status.get("mihomo_current_node") or status.get("mihomo_current_node") == proxy.current_node
+            status.update(await smart_proxy_stability_overview(session, proxy))
             statuses.append(status)
         return {"core": core, "proxies": statuses, "monitor": monitor}
 

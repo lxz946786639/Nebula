@@ -134,7 +134,11 @@
       </el-descriptions-item>
       <el-descriptions-item label="连接">{{ status.active_connections }} / {{ status.total_connections }}</el-descriptions-item>
       <el-descriptions-item label="内部适配器">{{ status.adapter_count }}</el-descriptions-item>
-      <el-descriptions-item label="转发流量">{{ formatBytes(status.upload_bytes) }} / {{ formatBytes(status.download_bytes) }}</el-descriptions-item>
+      <el-descriptions-item label="转发流量">
+        <button class="summary-action ant-traffic-action" type="button" title="查看转发流量详情" @click="showTraffic">
+          上传 {{ formatBytes(status.upload_bytes) }} / 下载 {{ formatBytes(status.download_bytes) }}
+        </button>
+      </el-descriptions-item>
     </el-descriptions>
 
     <div class="mobile-summary-grid">
@@ -154,6 +158,10 @@
         <span>连接</span>
         <strong>{{ status.active_connections }}</strong>
       </div>
+      <button class="mobile-summary-item mobile-summary-button" type="button" title="查看转发流量详情" @click="showTraffic">
+        <span>转发流量</span>
+        <strong>{{ formatBytes(status.upload_bytes + status.download_bytes) }}</strong>
+      </button>
     </div>
 
     <section class="ant-smart-proxies">
@@ -297,18 +305,77 @@
       <el-button type="primary" :loading="scheduleSaving" @click="saveScheduleConfig">保存</el-button>
     </template>
   </el-dialog>
+
+  <el-dialog v-model="trafficVisible" class="traffic-dialog" title="转发流量详情" width="980px">
+    <div class="traffic-toolbar">
+      <el-radio-group v-model="trafficGranularity" size="small" @change="reloadTrafficDetail">
+        <el-radio-button value="hour">按小时</el-radio-button>
+        <el-radio-button value="day">按天</el-radio-button>
+      </el-radio-group>
+      <el-button :icon="Refresh" :loading="trafficLoading" @click="reloadTrafficDetail">刷新</el-button>
+    </div>
+    <div v-loading="trafficLoading" class="traffic-content">
+      <el-empty v-if="!trafficDetail" description="暂无流量数据" :image-size="72" />
+      <template v-else>
+        <dl class="traffic-overview-grid">
+          <div>
+            <dt>总上传</dt>
+            <dd>{{ formatBytes(trafficDetail.upload_total) }}</dd>
+          </div>
+          <div>
+            <dt>总下载</dt>
+            <dd>{{ formatBytes(trafficDetail.download_total) }}</dd>
+          </div>
+          <div>
+            <dt>总用量</dt>
+            <dd>{{ formatBytes(trafficDetail.total) }}</dd>
+          </div>
+          <div>
+            <dt>当前速率</dt>
+            <dd>{{ formatRate(trafficDetail.current_upload_speed) }} / {{ formatRate(trafficDetail.current_download_speed) }}</dd>
+          </div>
+          <div>
+            <dt>峰值速率</dt>
+            <dd>{{ formatRate(trafficDetail.peak_upload_speed) }} / {{ formatRate(trafficDetail.peak_download_speed) }}</dd>
+          </div>
+          <div>
+            <dt>活跃连接</dt>
+            <dd>{{ trafficDetail.active_connections }}</dd>
+          </div>
+          <div>
+            <dt>来源 IP</dt>
+            <dd>{{ trafficDetail.source_ip_count }}</dd>
+          </div>
+          <div>
+            <dt>采样数</dt>
+            <dd>{{ trafficDetail.sample_count }}</dd>
+          </div>
+        </dl>
+        <div class="traffic-period-grid">
+          <article v-for="period in trafficDetail.periods" :key="period.key" class="traffic-period-card">
+            <strong>{{ period.label }}</strong>
+            <span>{{ formatBytes(period.total) }}</span>
+            <small>上传 {{ formatBytes(period.upload) }} / 下载 {{ formatBytes(period.download) }}</small>
+          </article>
+        </div>
+        <TrafficTrendChart :buckets="trafficDetail.trend" :granularity="trafficDetail.trend_granularity" />
+      </template>
+    </div>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { Aim, Connection, DocumentCopy, Lock, Refresh, Setting, UploadFilled, User, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import http from '@/api/http'
 import { copyText } from '@/utils/clipboard'
 import { formatDateTime } from '@/utils/datetime'
+
+const TrafficTrendChart = defineAsyncComponent(() => import('@/components/TrafficTrendChart.vue'))
 
 interface AntProxyUser {
   logged_in: boolean
@@ -374,6 +441,7 @@ interface AntProxyStatus {
   tolerance: number
   active_connections: number
   total_connections: number
+  source_ip_count: number
   upload_bytes: number
   download_bytes: number
   started_at: string | null
@@ -382,6 +450,41 @@ interface AntProxyStatus {
   persisted: boolean
   last_persisted_at: string | null
   last_error: string | null
+}
+
+interface AntProxyTrafficPeriod {
+  key: string
+  label: string
+  upload: number
+  download: number
+  total: number
+}
+
+interface AntProxyTrafficBucket {
+  at: string
+  label: string
+  upload: number
+  download: number
+  total: number
+}
+
+interface AntProxyTrafficSummary {
+  upload_total: number
+  download_total: number
+  total: number
+  current_upload_speed: number
+  current_download_speed: number
+  peak_upload_speed: number
+  peak_download_speed: number
+  active_connections: number
+  total_connections: number
+  source_ip_count: number
+  sample_count: number
+  sampled_from?: string | null
+  sampled_to?: string | null
+  periods: AntProxyTrafficPeriod[]
+  trend_granularity: 'hour' | 'day'
+  trend: AntProxyTrafficBucket[]
 }
 
 interface SmartProxy {
@@ -457,6 +560,7 @@ const status = reactive<AntProxyStatus>({
   tolerance: 100,
   active_connections: 0,
   total_connections: 0,
+  source_ip_count: 0,
   upload_bytes: 0,
   download_bytes: 0,
   started_at: null,
@@ -479,6 +583,10 @@ const uploadLoading = ref(false)
 const scheduleDialogVisible = ref(false)
 const scheduleLoading = ref(false)
 const scheduleSaving = ref(false)
+const trafficVisible = ref(false)
+const trafficLoading = ref(false)
+const trafficGranularity = ref<'hour' | 'day'>('hour')
+const trafficDetail = ref<AntProxyTrafficSummary | null>(null)
 const reloginMode = ref(false)
 const sourceMode = ref<'account' | 'upload'>('account')
 const activeLine = ref<'free' | 'paid'>('free')
@@ -820,6 +928,34 @@ async function loadAntSmartProxies() {
   writeSessionCache()
 }
 
+async function showTraffic() {
+  trafficGranularity.value = 'hour'
+  trafficVisible.value = true
+  await loadTrafficDetail()
+}
+
+async function loadTrafficDetail() {
+  trafficLoading.value = true
+  try {
+    const response = await http.get<AntProxyTrafficSummary>('/ant-proxy/traffic', {
+      params: { granularity: trafficGranularity.value },
+    })
+    trafficDetail.value = response.data
+    status.upload_bytes = response.data.upload_total
+    status.download_bytes = response.data.download_total
+    status.active_connections = response.data.active_connections
+    status.total_connections = response.data.total_connections
+    status.source_ip_count = response.data.source_ip_count
+    writeSessionCache()
+  } finally {
+    trafficLoading.value = false
+  }
+}
+
+function reloadTrafficDetail() {
+  loadTrafficDetail()
+}
+
 async function handleLineChange() {
   await loadNodesOnly({ preferCache: true })
 }
@@ -908,6 +1044,10 @@ function formatBytes(value: number) {
     index += 1
   }
   return `${size >= 10 || index === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[index]}`
+}
+
+function formatRate(value: number) {
+  return `${formatBytes(value)}/s`
 }
 
 onMounted(async () => {
@@ -1177,6 +1317,40 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
+.summary-action {
+  max-width: 100%;
+  border: 0;
+  border-radius: 6px;
+  padding: 2px 6px;
+  background: transparent;
+  color: var(--accent-hover);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+.summary-action:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-hover);
+}
+
+.ant-traffic-action {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-summary-button {
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.mobile-summary-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+  background: color-mix(in srgb, var(--panel-soft) 82%, var(--accent) 18%);
+}
+
 .ant-schedule-form {
   display: grid;
   gap: 12px;
@@ -1436,6 +1610,81 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
+.traffic-content {
+  min-width: 0;
+}
+
+:global(.traffic-dialog .el-dialog__body) {
+  padding-top: 18px;
+}
+
+.traffic-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.traffic-overview-grid,
+.traffic-period-grid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.traffic-overview-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 0;
+}
+
+.traffic-period-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.traffic-overview-grid div,
+.traffic-period-card {
+  min-width: 0;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.traffic-overview-grid div,
+.traffic-period-card {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.traffic-overview-grid dt,
+.traffic-overview-grid dd {
+  margin: 0;
+}
+
+.traffic-overview-grid dt,
+.traffic-period-card small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.traffic-overview-grid dd,
+.traffic-period-card span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--heading);
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traffic-period-card strong {
+  color: var(--heading);
+  font-size: 14px;
+}
+
 @media (max-width: 860px) {
   .ant-entry {
     min-height: auto;
@@ -1521,6 +1770,26 @@ onBeforeUnmount(() => {
 
   .ant-host-input {
     width: 100%;
+  }
+
+  :global(.traffic-dialog) {
+    width: calc(100vw - 24px) !important;
+  }
+
+  .traffic-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .traffic-toolbar :deep(.el-button),
+  .traffic-toolbar :deep(.el-radio-group) {
+    width: 100%;
+  }
+
+  .traffic-overview-grid,
+  .traffic-period-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

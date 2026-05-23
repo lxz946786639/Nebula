@@ -23,10 +23,21 @@
           <ArrowLeft />
         </button>
         <nav ref="navRef" @scroll.passive="updateNavScrollState">
-          <RouterLink v-for="item in navItems" :key="item.path" :to="item.path">
-            <component :is="item.icon" />
-            <span>{{ item.label }}</span>
-          </RouterLink>
+          <div
+            v-for="group in navGroups"
+            :key="group.id"
+            class="nav-group"
+            :class="{ 'is-active': group.items.some((item) => item.path === route.path) }"
+          >
+            <div class="nav-group-title">
+              <span>{{ group.id }}</span>
+              <strong>{{ group.label }}</strong>
+            </div>
+            <RouterLink v-for="item in group.items" :key="item.path" :to="item.path">
+              <component :is="item.icon" />
+              <span>{{ item.label }}</span>
+            </RouterLink>
+          </div>
         </nav>
         <button
           class="nav-scroll-button nav-scroll-button-right"
@@ -128,17 +139,42 @@ const { status: socketStatus, connect: connectSocket, stop: stopSocket } = useSt
   intervalMs: 30000,
 })
 
-const navItems = [
-  { path: '/dashboard', label: '首页', icon: DataAnalysis },
-  { path: '/subscriptions', label: '订阅管理', icon: Collection },
-  { path: '/nodes', label: '节点管理', icon: Connection },
-  { path: '/smart-proxies', label: '智能代理', icon: Guide },
-  { path: '/ant-proxy', label: '蚂蚁代理', icon: Link },
-  { path: '/rules', label: '规则管理', icon: Files },
-  { path: '/templates', label: '配置模板', icon: Document },
-  { path: '/settings', label: '系统设置', icon: Tools },
-  { path: '/logs', label: '日志中心', icon: Monitor },
+const navGroups = [
+  {
+    id: '01',
+    label: '概览',
+    items: [
+      { path: '/dashboard', label: '首页', icon: DataAnalysis },
+    ],
+  },
+  {
+    id: '02',
+    label: '管理',
+    items: [
+      { path: '/subscriptions', label: '订阅管理', icon: Collection },
+      { path: '/nodes', label: '节点管理', icon: Connection },
+      { path: '/smart-proxies', label: '智能代理', icon: Guide },
+      { path: '/rules', label: '规则管理', icon: Files },
+      { path: '/templates', label: '配置模板', icon: Document },
+    ],
+  },
+  {
+    id: '03',
+    label: '机场',
+    items: [
+      { path: '/ant-proxy', label: '蚂蚁代理', icon: Link },
+    ],
+  },
+  {
+    id: '04',
+    label: '系统',
+    items: [
+      { path: '/settings', label: '系统设置', icon: Tools },
+      { path: '/logs', label: '日志中心', icon: Monitor },
+    ],
+  },
 ]
+const navItems = navGroups.flatMap((group) => group.items)
 
 const title = computed(() => navItems.find((item) => item.path === route.path)?.label || '首页')
 const username = computed(() => auth.username || 'admin')

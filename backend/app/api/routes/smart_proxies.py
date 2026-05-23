@@ -29,8 +29,10 @@ from app.schemas.smart_proxy import (
     SmartProxyPreset,
     SmartProxyRead,
     SmartProxyRuntime,
+    SmartProxyStabilitySummary,
     SmartProxyStatus,
     SmartProxySwitchLogRead,
+    SmartProxyTrafficSummary,
     SmartProxyUpdate,
 )
 from app.services.audit import write_audit
@@ -45,7 +47,6 @@ from app.services.smart_proxy import (
     enforce_smart_proxy_access,
     add_smart_proxy_switch_log,
     ensure_unique_port,
-    mihomo_core_status,
     normalize_data_source,
     normalize_proxy_type,
     normalize_strategy,
@@ -53,6 +54,11 @@ from app.services.smart_proxy import (
     smart_proxy_traffic_policy,
     smart_proxy_uses_global_policy,
     smart_proxy_monitor_state,
+    smart_proxy_connection_stats,
+    smart_proxy_module_status,
+    smart_proxy_stability_overview,
+    smart_proxy_stability_summary,
+    smart_proxy_traffic_summary,
     smart_proxy_runtime_status,
     smart_proxy_candidate_count,
     write_mihomo_runtime_config,
@@ -200,6 +206,7 @@ async def _read_proxy(
     proxy: SmartProxy,
     *,
     runtime_apply_error: str | None = None,
+    traffic_stats: dict[str, object] | None = None,
 ) -> SmartProxyRead:
     data = SmartProxyRead.model_validate(proxy)
     if proxy.strategy in {"select", "fallback"} and proxy.stability_priority:
@@ -208,6 +215,21 @@ async def _read_proxy(
     data.candidate_nodes = await smart_proxy_candidate_count(session, proxy)
     data.runtime_apply_error = runtime_apply_error
     data.apply_status, data.apply_status_reason = _apply_status(proxy)
+    if traffic_stats:
+        for key in (
+            "active_connections",
+            "online_users",
+            "source_ips",
+            "upload_total",
+            "download_total",
+            "upload_speed",
+            "download_speed",
+            "unauthorized_connections",
+        ):
+            if key in traffic_stats:
+                setattr(data, key, traffic_stats[key])
+    for key, value in (await smart_proxy_stability_overview(session, proxy)).items():
+        setattr(data, key, value)
     return data
 
 
@@ -447,7 +469,8 @@ async def _proxy_config(session: SessionDep, proxy: SmartProxy) -> SmartProxyCon
 async def list_smart_proxies(session: SessionDep, current_user: CurrentUser) -> list[SmartProxyRead]:
     await _ensure_node_pool_for_candidates(session, current_user.username)
     proxies = list((await session.scalars(select(SmartProxy).order_by(SmartProxy.id.asc()))).all())
-    return [await _read_proxy(session, item) for item in proxies]
+    traffic_stats = await smart_proxy_connection_stats(session, proxies)
+    return [await _read_proxy(session, item, traffic_stats=traffic_stats.get(item.id)) for item in proxies]
 
 
 @router.post("", response_model=SmartProxyRead, status_code=status.HTTP_201_CREATED)
@@ -550,7 +573,31 @@ async def preview_runtime(
 
 @router.get("/core/status", response_model=MihomoCoreStatus)
 async def core_status(session: SessionDep, current_user: CurrentUser) -> MihomoCoreStatus:
-    return MihomoCoreStatus(**await mihomo_core_status(session))
+    return MihomoCoreStatus(**await smart_proxy_module_status(session))
+
+
+@router.get("/stability", response_model=list[SmartProxyStabilitySummary])
+async def list_smart_proxy_stability(
+    session: SessionDep,
+    current_user: CurrentUser,
+    window_hours: int = Query(default=24, ge=1, le=168),
+) -> list[SmartProxyStabilitySummary]:
+    proxies = list((await session.scalars(select(SmartProxy).order_by(SmartProxy.id.asc()))).all())
+    return [
+        SmartProxyStabilitySummary(
+            **await smart_proxy_stability_summary(session, proxy, window_hours=window_hours, include_samples=False)
+        )
+        for proxy in proxies
+    ]
+
+
+@router.get("/traffic", response_model=SmartProxyTrafficSummary)
+async def get_smart_proxy_traffic_summary(
+    session: SessionDep,
+    current_user: CurrentUser,
+    granularity: str = Query(default="hour", pattern="^(hour|day)$"),
+) -> SmartProxyTrafficSummary:
+    return SmartProxyTrafficSummary(**await smart_proxy_traffic_summary(session, granularity=granularity))
 
 
 @router.get("/presets", response_model=list[SmartProxyPreset])
@@ -703,7 +750,8 @@ async def get_smart_proxy(proxy_id: int, session: SessionDep, current_user: Curr
     proxy = await session.get(SmartProxy, proxy_id)
     if proxy is None:
         raise HTTPException(status_code=404, detail="Smart proxy not found")
-    return await _read_proxy(session, proxy)
+    traffic_stats = await smart_proxy_connection_stats(session, [proxy])
+    return await _read_proxy(session, proxy, traffic_stats=traffic_stats.get(proxy.id))
 
 
 @router.get("/{proxy_id}/status", response_model=SmartProxyStatus)
@@ -737,9 +785,38 @@ async def get_smart_proxy_status(
     status_payload["state_synced"] = (
         not status_payload.get("mihomo_current_node") or status_payload.get("mihomo_current_node") == proxy.current_node
     )
+    status_payload.update(await smart_proxy_stability_overview(session, proxy))
     if changed:
         await apply_stability_priority_runtime(session, [proxy])
     return SmartProxyStatus(**status_payload)
+
+
+@router.get("/{proxy_id}/stability", response_model=SmartProxyStabilitySummary)
+async def get_smart_proxy_stability(
+    proxy_id: int,
+    session: SessionDep,
+    current_user: CurrentUser,
+    window_hours: int = Query(default=24, ge=1, le=168),
+) -> SmartProxyStabilitySummary:
+    proxy = await session.get(SmartProxy, proxy_id)
+    if proxy is None:
+        raise HTTPException(status_code=404, detail="Smart proxy not found")
+    return SmartProxyStabilitySummary(
+        **await smart_proxy_stability_summary(session, proxy, window_hours=window_hours, include_samples=True)
+    )
+
+
+@router.get("/{proxy_id}/traffic", response_model=SmartProxyTrafficSummary)
+async def get_smart_proxy_traffic(
+    proxy_id: int,
+    session: SessionDep,
+    current_user: CurrentUser,
+    granularity: str = Query(default="hour", pattern="^(hour|day)$"),
+) -> SmartProxyTrafficSummary:
+    proxy = await session.get(SmartProxy, proxy_id)
+    if proxy is None:
+        raise HTTPException(status_code=404, detail="Smart proxy not found")
+    return SmartProxyTrafficSummary(**await smart_proxy_traffic_summary(session, proxy, granularity=granularity))
 
 
 @router.get("/{proxy_id}/config", response_model=SmartProxyConfig)

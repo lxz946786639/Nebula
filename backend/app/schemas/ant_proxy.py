@@ -67,6 +67,7 @@ class AntProxyStatus(BaseModel):
     tolerance: int = 100
     active_connections: int = 0
     total_connections: int = 0
+    source_ip_count: int = 0
     upload_bytes: int = 0
     download_bytes: int = 0
     started_at: datetime | None = None
@@ -99,6 +100,41 @@ class AntProxyScheduleConfig(BaseModel):
 class AntProxyScheduleUpdate(BaseModel):
     enabled: bool | None = None
     interval_minutes: int | None = Field(default=None, ge=0, le=43200)
+
+
+class AntProxyTrafficPeriod(BaseModel):
+    key: str
+    label: str
+    upload: int = 0
+    download: int = 0
+    total: int = 0
+
+
+class AntProxyTrafficBucket(BaseModel):
+    at: datetime
+    label: str
+    upload: int = 0
+    download: int = 0
+    total: int = 0
+
+
+class AntProxyTrafficSummary(BaseModel):
+    upload_total: int = 0
+    download_total: int = 0
+    total: int = 0
+    current_upload_speed: int = 0
+    current_download_speed: int = 0
+    peak_upload_speed: int = 0
+    peak_download_speed: int = 0
+    active_connections: int = 0
+    total_connections: int = 0
+    source_ip_count: int = 0
+    sample_count: int = 0
+    sampled_from: datetime | None = None
+    sampled_to: datetime | None = None
+    periods: list[AntProxyTrafficPeriod] = Field(default_factory=list)
+    trend_granularity: str = "hour"
+    trend: list[AntProxyTrafficBucket] = Field(default_factory=list)
 
 
 class AntProxyLoginRequest(BaseModel):

@@ -9,6 +9,27 @@ from app.models.system_setting import SystemSetting
 LEGACY_PUBLIC_BASE_URL_KEY = "public_base_url"
 SUBSCRIPTION_PUBLIC_BASE_URL_KEY = "subscription_public_base_url"
 PROXY_PUBLIC_BASE_URL_KEY = "proxy_public_base_url"
+HISTORY_CLEANUP_RETENTION_DAYS_KEY = "history_cleanup_retention_days"
+DEFAULT_HISTORY_CLEANUP_RETENTION_DAYS = 30
+HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS_KEY = "history_retention_smart_proxy_traffic_days"
+HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS_KEY = "history_retention_ant_proxy_traffic_days"
+HISTORY_RETENTION_AUDIT_LOG_DAYS_KEY = "history_retention_audit_log_days"
+HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS_KEY = "history_retention_subscription_traffic_days"
+HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS_KEY = "history_retention_smart_proxy_stability_days"
+HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS_KEY = "history_retention_smart_proxy_health_log_days"
+HISTORY_RETENTION_SMART_PROXY_SWITCH_LOG_DAYS_KEY = "history_retention_smart_proxy_switch_log_days"
+HISTORY_RETENTION_NODE_SNAPSHOT_DAYS_KEY = "history_retention_node_snapshot_days"
+HISTORY_RETENTION_DEFAULT_ATTRS = {
+    HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS_KEY: "HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS",
+    HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS_KEY: "HISTORY_RETENTION_ANT_PROXY_TRAFFIC_DAYS",
+    HISTORY_RETENTION_AUDIT_LOG_DAYS_KEY: "HISTORY_RETENTION_AUDIT_LOG_DAYS",
+    HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS_KEY: "HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS",
+    HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS_KEY: "HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS",
+    HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS_KEY: "HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS",
+    HISTORY_RETENTION_SMART_PROXY_SWITCH_LOG_DAYS_KEY: "HISTORY_RETENTION_SMART_PROXY_SWITCH_LOG_DAYS",
+    HISTORY_RETENTION_NODE_SNAPSHOT_DAYS_KEY: "HISTORY_RETENTION_NODE_SNAPSHOT_DAYS",
+}
+HISTORY_RETENTION_SETTING_KEYS = tuple(HISTORY_RETENTION_DEFAULT_ATTRS)
 
 
 def normalize_public_base_url(value: str | None) -> str:
@@ -119,6 +140,36 @@ async def get_traffic_poll_interval_minutes(session: AsyncSession) -> int:
     except ValueError:
         return 30
     return max(interval, 0)
+
+
+async def get_history_cleanup_retention_days(session: AsyncSession) -> int:
+    settings = get_settings()
+    return max(
+        await get_int_setting(
+            session,
+            HISTORY_CLEANUP_RETENTION_DAYS_KEY,
+            settings.HISTORY_CLEANUP_RETENTION_DAYS,
+        ),
+        0,
+    )
+
+
+async def get_history_retention_days(session: AsyncSession, key: str) -> int:
+    settings = get_settings()
+    fallback = int(
+        getattr(
+            settings,
+            HISTORY_RETENTION_DEFAULT_ATTRS.get(key, ""),
+            settings.HISTORY_CLEANUP_RETENTION_DAYS,
+        )
+    )
+    legacy_value = await get_setting(session, HISTORY_CLEANUP_RETENTION_DAYS_KEY)
+    if legacy_value is not None:
+        try:
+            fallback = int(legacy_value or fallback)
+        except ValueError:
+            pass
+    return max(await get_int_setting(session, key, fallback), 0)
 
 
 async def get_int_setting(session: AsyncSession, key: str, fallback: int) -> int:

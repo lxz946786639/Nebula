@@ -207,7 +207,7 @@ cd backend
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
 启动前端：
@@ -249,6 +249,7 @@ MIHOMO_API_URL=http://127.0.0.1:9090
 | subconverter 服务地址 | 生产环境可修改，保存前会检测新地址是否可用；修改成功后会清理订阅缓存并触发节点池同步 |
 | Mihomo API 地址 / 密钥 | 生产环境可修改，保存前会检测 `/version`；修改成功后会刷新智能代理运行状态 |
 | ACL4SSR 远程规则地址 | 默认规则模板和转换链路使用的远程规则配置 |
+| 历史数据分类保留天数 | 分别配置智能代理流量、蚂蚁流量、日志中心、订阅流量快照、稳定性样本、健康检测、节点切换和节点转换快照的保留天数，默认 `30` 天；`0` 表示关闭对应类别自动清理 |
 
 Redis 连接地址不在页面中维护，只能在部署时通过 `REDIS_URL` 配置。
 
@@ -271,6 +272,7 @@ Redis 连接地址不在页面中维护，只能在部署时通过 `REDIS_URL` �
 | `MIHOMO_PROXY_SERVER_NAMESERVERS` | Mihomo 解析代理节点服务器名使用的 DNS；Docker Compose 默认 `127.0.0.11`，用于解析 `backend` 等服务名 |
 | `ANT_PROXY_AUTO_REFRESH_ENABLED` | 蚂蚁代理账号登录节点是否启用后台自动刷新 |
 | `ANT_PROXY_AUTO_REFRESH_INTERVAL_MINUTES` | 蚂蚁代理账号登录节点后台刷新间隔，默认 `360` 分钟 |
+| `HISTORY_RETENTION_*_DAYS` | 历史数据分类保留天数，默认 `30`；`0` 表示关闭对应类别自动清理 |
 
 `.env` 修改后通常需要重启服务：
 

@@ -21,6 +21,7 @@ RESOURCE_LABELS = {
     "smart_proxy": "智能代理",
     "smart_proxy_config": "智能代理配置",
     "settings": "系统配置",
+    "history_cleanup": "历史数据清理",
     "rule_template": "规则模板",
     "config_template": "配置模板",
 }
@@ -45,6 +46,7 @@ ACTION_LABELS = {
     "reload": "重新加载",
     "apply": "应用",
     "monitor": "监控",
+    "cleanup": "清理",
     "health_check": "健康检查",
     "update_config": "更新配置",
     "access_enforce": "访问控制",

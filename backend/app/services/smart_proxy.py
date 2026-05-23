@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
 import os
 import random
 import re
@@ -25,13 +26,19 @@ from app.core.timezone import as_china, now_china
 from app.models.node import Node
 from app.models.smart_proxy import SmartProxy
 from app.models.smart_proxy_health import SmartProxyHealthLog
+from app.models.smart_proxy_stability import SmartProxyStabilitySample
 from app.models.smart_proxy_switch import SmartProxySwitchLog
+from app.models.smart_proxy_traffic import SmartProxyTrafficSample
 from app.models.system_setting import SystemSetting
 from app.models.traffic_snapshot import TrafficSnapshot
 from app.services.audit import write_audit
 from app.services.node_latency import test_selected_node_latencies
 from app.services.node_processor import dump_yaml_config
 from app.services.settings import (
+    HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS_KEY,
+    HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS_KEY,
+    HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS_KEY,
+    get_history_retention_days,
     get_mihomo_api_secret,
     get_mihomo_api_url,
     get_mihomo_core_config_path,
@@ -61,9 +68,17 @@ SCENARIO_CHECKS = {
 RUNTIME_NODE_ID_RE = re.compile(r"^node-(\d+)\b")
 TRAFFIC_RUNTIME_RELOAD_COOLDOWN = timedelta(minutes=5)
 CORE_TRAFFIC_STATE_KEY = "mihomo_core_traffic_state"
+SMART_PROXY_TRAFFIC_STATE_KEY = "smart_proxy_traffic_state"
+SMART_PROXY_TRAFFIC_CACHE_TTL = timedelta(seconds=1)
+SMART_PROXY_TRAFFIC_SAMPLE_INTERVAL = timedelta(seconds=30)
 SMART_PROXY_MONITOR_LAST_SYNC_KEY = "smart_proxy_monitor_last_sync_at"
+STABILITY_DEFAULT_WINDOW_HOURS = 24
 _core_traffic_sample: tuple[datetime, int, int] | None = None
 _proxy_traffic_samples: dict[int, tuple[datetime, int, int]] = {}
+_proxy_connection_samples: dict[str, tuple[int, int, int, datetime]] = {}
+_smart_proxy_traffic_last_accounted_at: datetime | None = None
+_smart_proxy_traffic_last_sampled_at: datetime | None = None
+_smart_proxy_traffic_payload_cache: dict[int, dict[str, Any]] = {}
 _last_traffic_runtime_reload_at: datetime | None = None
 _pending_traffic_runtime_reload = False
 
@@ -274,14 +289,81 @@ def _parse_core_traffic_state(value: str | None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _parse_smart_proxy_traffic_state(value: str | None) -> dict[str, Any]:
+    return _parse_core_traffic_state(value)
+
+
+def _traffic_totals_from_state(state: dict[str, Any]) -> dict[int, tuple[int, int]]:
+    raw_proxies = state.get("proxies")
+    if not isinstance(raw_proxies, dict):
+        return {}
+    totals: dict[int, tuple[int, int]] = {}
+    for raw_id, item in raw_proxies.items():
+        try:
+            proxy_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(item, dict):
+            continue
+        totals[proxy_id] = (
+            _safe_int(item.get("upload_total")),
+            _safe_int(item.get("download_total")),
+        )
+    return totals
+
+
 async def _core_traffic_setting(session: AsyncSession) -> SystemSetting | None:
     return await session.scalar(select(SystemSetting).where(SystemSetting.key == CORE_TRAFFIC_STATE_KEY))
+
+
+async def _smart_proxy_traffic_setting(session: AsyncSession) -> SystemSetting | None:
+    return await session.scalar(select(SystemSetting).where(SystemSetting.key == SMART_PROXY_TRAFFIC_STATE_KEY))
 
 
 async def _read_persisted_core_traffic(session: AsyncSession) -> tuple[int, int]:
     item = await _core_traffic_setting(session)
     state = _parse_core_traffic_state(item.value if item is not None else None)
     return _safe_int(state.get("upload_total")), _safe_int(state.get("download_total"))
+
+
+async def _read_persisted_smart_proxy_traffic(session: AsyncSession) -> dict[int, tuple[int, int]]:
+    item = await _smart_proxy_traffic_setting(session)
+    state = _parse_smart_proxy_traffic_state(item.value if item is not None else None)
+    return _traffic_totals_from_state(state)
+
+
+async def _persist_smart_proxy_traffic_totals(
+    session: AsyncSession,
+    totals: dict[int, tuple[int, int]],
+    *,
+    observed_at: datetime,
+) -> None:
+    item = await _smart_proxy_traffic_setting(session)
+    payload = {
+        "proxies": {
+            str(proxy_id): {
+                "upload_total": max(upload_total, 0),
+                "download_total": max(download_total, 0),
+            }
+            for proxy_id, (upload_total, download_total) in sorted(totals.items())
+            if upload_total > 0 or download_total > 0
+        },
+        "updated_at": observed_at.isoformat(),
+    }
+    value = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if item is None:
+        session.add(
+            SystemSetting(
+                key=SMART_PROXY_TRAFFIC_STATE_KEY,
+                value=value,
+                secret=False,
+                description="Persisted smart proxy traffic totals",
+            )
+        )
+    elif item.value != value:
+        item.value = value
+        item.description = "Persisted smart proxy traffic totals"
+    await session.commit()
 
 
 async def _persist_core_traffic_sample(
@@ -374,6 +456,22 @@ def _connection_chains(connection: dict[str, Any]) -> set[str]:
     if isinstance(chains, list):
         return {str(item) for item in chains if str(item).strip()}
     return set()
+
+
+def _connection_accounting_key(connection: dict[str, Any]) -> str | None:
+    connection_id = connection.get("id")
+    if connection_id:
+        return f"id:{connection_id}"
+    metadata = connection.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    source = _connection_source_ip(connection) or ""
+    destination = _connection_destination(connection) or ""
+    network = metadata.get("network") or metadata.get("type") or ""
+    process = metadata.get("process") or metadata.get("processPath") or ""
+    if not source or not destination:
+        return None
+    return f"meta:{source}|{destination}|{network}|{process}"
 
 
 def _connection_source_ip(connection: dict[str, Any]) -> str | None:
@@ -1835,64 +1933,404 @@ def _empty_connection_stats(proxy_id: int) -> dict[str, Any]:
     }
 
 
+async def _record_smart_proxy_traffic_samples(
+    session: AsyncSession,
+    payload: dict[int, dict[str, Any]],
+    *,
+    sampled_at: datetime,
+) -> None:
+    if not payload:
+        return
+    for proxy_id, stats in payload.items():
+        session.add(
+            SmartProxyTrafficSample(
+                smart_proxy_id=proxy_id,
+                sampled_at=sampled_at,
+                upload_total=_safe_int(stats.get("upload_total")),
+                download_total=_safe_int(stats.get("download_total")),
+                upload_speed=_safe_int(stats.get("upload_speed")),
+                download_speed=_safe_int(stats.get("download_speed")),
+                active_connections=_safe_int(stats.get("active_connections")),
+                online_users=_safe_int(stats.get("online_users")),
+                source_ip_count=len(stats.get("source_ips") or []),
+                unauthorized_connections=_safe_int(stats.get("unauthorized_connections")),
+            )
+        )
+    retention_days = await get_history_retention_days(session, HISTORY_RETENTION_SMART_PROXY_TRAFFIC_DAYS_KEY)
+    if retention_days > 0:
+        cutoff = sampled_at - timedelta(days=retention_days)
+        await session.execute(delete(SmartProxyTrafficSample).where(SmartProxyTrafficSample.sampled_at < cutoff))
+    await session.commit()
+
+
 async def smart_proxy_connection_stats(
     session: AsyncSession,
     proxies: list[SmartProxy] | None = None,
 ) -> dict[int, dict[str, Any]]:
-    global _proxy_traffic_samples
+    global _proxy_connection_samples, _proxy_traffic_samples, _smart_proxy_traffic_last_accounted_at, _smart_proxy_traffic_last_sampled_at, _smart_proxy_traffic_payload_cache
     if proxies is None:
         proxies = list((await session.scalars(select(SmartProxy).where(SmartProxy.enabled.is_(True)))).all())
-    stats_by_id = {proxy.id: ConnectionStats(source_ips=set()) for proxy in proxies}
     if not proxies:
         return {}
+    requested_ids = {proxy.id for proxy in proxies}
 
-    data = await mihomo_connections(session)
-    connections = data.get("connections")
-    if not isinstance(connections, list):
-        connections = []
+    async with exclusive_lock("smart_proxy_traffic_state"):
+        now = now_china()
+        if (
+            _smart_proxy_traffic_last_accounted_at is not None
+            and now - _smart_proxy_traffic_last_accounted_at <= SMART_PROXY_TRAFFIC_CACHE_TTL
+            and _smart_proxy_traffic_payload_cache
+        ):
+            return {
+                proxy_id: dict(_smart_proxy_traffic_payload_cache.get(proxy_id) or _empty_connection_stats(proxy_id))
+                for proxy_id in requested_ids
+            }
 
-    groups = {runtime_group_name(proxy): proxy for proxy in proxies}
-    for connection in connections:
-        if not isinstance(connection, dict):
-            continue
-        chains = _connection_chains(connection)
-        if not chains:
-            continue
-        upload = _safe_int(connection.get("upload"))
-        download = _safe_int(connection.get("download"))
-        source_ip = _connection_source_ip(connection)
-        for group_name, proxy in groups.items():
-            if group_name not in chains:
+        enabled_proxies = list((await session.scalars(select(SmartProxy).where(SmartProxy.enabled.is_(True)))).all())
+        stats_by_id = {proxy.id: ConnectionStats(source_ips=set()) for proxy in enabled_proxies}
+        for proxy in proxies:
+            stats_by_id.setdefault(proxy.id, ConnectionStats(source_ips=set()))
+        totals = await _read_persisted_smart_proxy_traffic(session)
+        changed = False
+
+        try:
+            data = await mihomo_connections(session)
+        except MihomoApiError:
+            data = {}
+        connections = data.get("connections")
+        if not isinstance(connections, list):
+            connections = []
+
+        groups = {runtime_group_name(proxy): proxy for proxy in enabled_proxies}
+        seen_connection_keys: set[str] = set()
+        for connection in connections:
+            if not isinstance(connection, dict):
                 continue
-            stats = stats_by_id[proxy.id]
+            chains = _connection_chains(connection)
+            if not chains:
+                continue
+            proxy = next((item for group_name, item in groups.items() if group_name in chains), None)
+            if proxy is None:
+                continue
+
+            upload = _safe_int(connection.get("upload"))
+            download = _safe_int(connection.get("download"))
+            source_ip = _connection_source_ip(connection)
+            stats = stats_by_id.setdefault(proxy.id, ConnectionStats(source_ips=set()))
             stats.active_connections += 1
-            stats.upload_total += upload
-            stats.download_total += download
             if source_ip and stats.source_ips is not None:
                 stats.source_ips.add(source_ip)
             if not _source_allowed(source_ip, proxy.ip_whitelist):
                 stats.unauthorized_connections += 1
 
-    now = now_china()
-    payload: dict[int, dict[str, Any]] = {}
-    for proxy in proxies:
-        stats = stats_by_id[proxy.id]
-        current = (now, stats.upload_total, stats.download_total)
-        upload_speed, download_speed = _speed_from_sample(_proxy_traffic_samples.get(proxy.id), current)
-        _proxy_traffic_samples[proxy.id] = current
-        source_ips = sorted(stats.source_ips or set())
-        payload[proxy.id] = {
-            "active_connections": stats.active_connections,
-            "online_users": len(source_ips),
-            "source_ips": source_ips,
-            "upload_total": stats.upload_total,
-            "download_total": stats.download_total,
-            "upload_speed": upload_speed,
-            "download_speed": download_speed,
-            "unauthorized_connections": stats.unauthorized_connections,
-            "switch_count": proxy.switch_count or 0,
+            connection_key = _connection_accounting_key(connection)
+            if not connection_key:
+                continue
+            seen_connection_keys.add(connection_key)
+            previous = _proxy_connection_samples.get(connection_key)
+            if previous is not None and previous[0] == proxy.id:
+                _, previous_upload, previous_download, _ = previous
+                upload_delta = upload - previous_upload
+                download_delta = download - previous_download
+                if upload_delta >= 0 and download_delta >= 0:
+                    current_upload_total, current_download_total = totals.get(proxy.id, (0, 0))
+                    next_upload_total = current_upload_total + upload_delta
+                    next_download_total = current_download_total + download_delta
+                    if next_upload_total != current_upload_total or next_download_total != current_download_total:
+                        totals[proxy.id] = (next_upload_total, next_download_total)
+                        changed = True
+            _proxy_connection_samples[connection_key] = (proxy.id, upload, download, now)
+
+        _proxy_connection_samples = {
+            key: sample
+            for key, sample in _proxy_connection_samples.items()
+            if key in seen_connection_keys or now - sample[3] <= timedelta(minutes=5)
         }
-    return payload
+
+        if changed:
+            await _persist_smart_proxy_traffic_totals(session, totals, observed_at=now)
+
+        all_payload_ids = set(stats_by_id) | set(totals) | requested_ids
+        payload: dict[int, dict[str, Any]] = {}
+        proxy_map = {proxy.id: proxy for proxy in enabled_proxies}
+        proxy_map.update({proxy.id: proxy for proxy in proxies})
+        for proxy_id in all_payload_ids:
+            stats = stats_by_id.get(proxy_id) or ConnectionStats(source_ips=set())
+            upload_total, download_total = totals.get(proxy_id, (0, 0))
+            current = (now, upload_total, download_total)
+            upload_speed, download_speed = _speed_from_sample(_proxy_traffic_samples.get(proxy_id), current)
+            _proxy_traffic_samples[proxy_id] = current
+            source_ips = sorted(stats.source_ips or set())
+            payload[proxy_id] = {
+                "active_connections": stats.active_connections,
+                "online_users": len(source_ips),
+                "source_ips": source_ips,
+                "upload_total": upload_total,
+                "download_total": download_total,
+                "upload_speed": upload_speed,
+                "download_speed": download_speed,
+                "unauthorized_connections": stats.unauthorized_connections,
+                "switch_count": (proxy_map.get(proxy_id).switch_count if proxy_map.get(proxy_id) is not None else 0) or 0,
+            }
+
+        _smart_proxy_traffic_last_accounted_at = now
+        _smart_proxy_traffic_payload_cache = {proxy_id: dict(item) for proxy_id, item in payload.items()}
+        if (
+            _smart_proxy_traffic_last_sampled_at is None
+            or now - _smart_proxy_traffic_last_sampled_at >= SMART_PROXY_TRAFFIC_SAMPLE_INTERVAL
+        ):
+            await _record_smart_proxy_traffic_samples(session, payload, sampled_at=now)
+            _smart_proxy_traffic_last_sampled_at = now
+        return {proxy_id: dict(payload.get(proxy_id) or _empty_connection_stats(proxy_id)) for proxy_id in requested_ids}
+
+
+async def smart_proxy_traffic_overview(session: AsyncSession) -> dict[str, Any]:
+    proxies = list((await session.scalars(select(SmartProxy).order_by(SmartProxy.id.asc()))).all())
+    stats = await smart_proxy_connection_stats(session, proxies)
+    return {
+        "smart_proxy_active_connections": sum(item.get("active_connections", 0) for item in stats.values()),
+        "smart_proxy_online_users": len(
+            {
+                source_ip
+                for item in stats.values()
+                for source_ip in item.get("source_ips", [])
+                if source_ip
+            }
+        ),
+        "smart_proxy_upload_total": sum(item.get("upload_total", 0) for item in stats.values()),
+        "smart_proxy_download_total": sum(item.get("download_total", 0) for item in stats.values()),
+        "smart_proxy_upload_speed": sum(item.get("upload_speed", 0) for item in stats.values()),
+        "smart_proxy_download_speed": sum(item.get("download_speed", 0) for item in stats.values()),
+    }
+
+
+async def smart_proxy_module_status(session: AsyncSession) -> dict[str, Any]:
+    status = await mihomo_core_status(session)
+    status.update(await smart_proxy_traffic_overview(session))
+    return status
+
+
+def _day_start(value: datetime) -> datetime:
+    value = as_china(value) or value
+    return value.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _hour_start(value: datetime) -> datetime:
+    value = as_china(value) or value
+    return value.replace(minute=0, second=0, microsecond=0)
+
+
+def _traffic_delta(
+    previous: SmartProxyTrafficSample,
+    current: SmartProxyTrafficSample,
+) -> tuple[int, int]:
+    upload_delta = current.upload_total - previous.upload_total
+    download_delta = current.download_total - previous.download_total
+    if upload_delta < 0:
+        upload_delta = current.upload_total
+    if download_delta < 0:
+        download_delta = current.download_total
+    return max(upload_delta, 0), max(download_delta, 0)
+
+
+async def _traffic_samples_by_proxy(
+    session: AsyncSession,
+    proxy_ids: list[int],
+    *,
+    start: datetime,
+    end: datetime,
+) -> dict[int, list[SmartProxyTrafficSample]]:
+    if not proxy_ids:
+        return {}
+    timelines: dict[int, list[SmartProxyTrafficSample]] = {proxy_id: [] for proxy_id in proxy_ids}
+    for proxy_id in proxy_ids:
+        previous = await session.scalar(
+            select(SmartProxyTrafficSample)
+            .where(
+                SmartProxyTrafficSample.smart_proxy_id == proxy_id,
+                SmartProxyTrafficSample.sampled_at < start,
+            )
+            .order_by(SmartProxyTrafficSample.sampled_at.desc(), SmartProxyTrafficSample.id.desc())
+            .limit(1)
+        )
+        if previous is not None:
+            timelines[proxy_id].append(previous)
+    samples = list(
+        (
+            await session.scalars(
+                select(SmartProxyTrafficSample)
+                .where(
+                    SmartProxyTrafficSample.smart_proxy_id.in_(proxy_ids),
+                    SmartProxyTrafficSample.sampled_at >= start,
+                    SmartProxyTrafficSample.sampled_at <= end,
+                )
+                .order_by(
+                    SmartProxyTrafficSample.smart_proxy_id.asc(),
+                    SmartProxyTrafficSample.sampled_at.asc(),
+                    SmartProxyTrafficSample.id.asc(),
+                )
+            )
+        ).all()
+    )
+    for sample in samples:
+        timelines.setdefault(sample.smart_proxy_id, []).append(sample)
+    return timelines
+
+
+def _usage_between(
+    timelines: dict[int, list[SmartProxyTrafficSample]],
+    *,
+    start: datetime,
+    end: datetime,
+) -> tuple[int, int]:
+    upload = 0
+    download = 0
+    for samples in timelines.values():
+        previous: SmartProxyTrafficSample | None = None
+        for sample in samples:
+            sampled_at = as_china(sample.sampled_at) or sample.sampled_at
+            if sampled_at > end:
+                break
+            if previous is not None and sampled_at > start:
+                upload_delta, download_delta = _traffic_delta(previous, sample)
+                upload += upload_delta
+                download += download_delta
+            previous = sample
+    return upload, download
+
+
+def _traffic_period(key: str, label: str, upload: int, download: int) -> dict[str, Any]:
+    return {"key": key, "label": label, "upload": upload, "download": download, "total": upload + download}
+
+
+def _traffic_trend(
+    timelines: dict[int, list[SmartProxyTrafficSample]],
+    *,
+    start: datetime,
+    end: datetime,
+    granularity: str,
+) -> list[dict[str, Any]]:
+    if granularity == "day":
+        bucket_size = timedelta(days=1)
+        label_format = "%m-%d"
+    else:
+        bucket_size = timedelta(hours=1)
+        label_format = "%H:%M"
+
+    buckets: dict[datetime, dict[str, Any]] = {}
+    cursor = start
+    while cursor <= end:
+        buckets[cursor] = {
+            "at": cursor,
+            "label": cursor.strftime(label_format),
+            "upload": 0,
+            "download": 0,
+            "total": 0,
+        }
+        cursor += bucket_size
+
+    for samples in timelines.values():
+        previous: SmartProxyTrafficSample | None = None
+        for sample in samples:
+            sampled_at = as_china(sample.sampled_at) or sample.sampled_at
+            if sampled_at > end + bucket_size:
+                break
+            if previous is not None and sampled_at >= start:
+                upload_delta, download_delta = _traffic_delta(previous, sample)
+                if granularity == "day":
+                    bucket_at = _day_start(sampled_at)
+                else:
+                    bucket_at = _hour_start(sampled_at)
+                bucket = buckets.get(bucket_at)
+                if bucket is not None:
+                    bucket["upload"] += upload_delta
+                    bucket["download"] += download_delta
+                    bucket["total"] += upload_delta + download_delta
+            previous = sample
+    return list(buckets.values())
+
+
+def _peak_speed(timelines: dict[int, list[SmartProxyTrafficSample]]) -> tuple[int, int]:
+    speeds_by_at: dict[datetime, tuple[int, int]] = {}
+    for samples in timelines.values():
+        for sample in samples:
+            sampled_at = as_china(sample.sampled_at) or sample.sampled_at
+            upload, download = speeds_by_at.get(sampled_at, (0, 0))
+            speeds_by_at[sampled_at] = (upload + sample.upload_speed, download + sample.download_speed)
+    return (
+        max((item[0] for item in speeds_by_at.values()), default=0),
+        max((item[1] for item in speeds_by_at.values()), default=0),
+    )
+
+
+async def smart_proxy_traffic_summary(
+    session: AsyncSession,
+    proxy: SmartProxy | None = None,
+    *,
+    granularity: str = "hour",
+) -> dict[str, Any]:
+    granularity = "day" if granularity == "day" else "hour"
+    if proxy is None:
+        proxies = list((await session.scalars(select(SmartProxy).order_by(SmartProxy.id.asc()))).all())
+    else:
+        proxies = [proxy]
+    proxy_ids = [item.id for item in proxies]
+    stats = await smart_proxy_connection_stats(session, proxies)
+    now = now_china()
+    today_start = _day_start(now)
+    yesterday_start = today_start - timedelta(days=1)
+    seven_day_start = today_start - timedelta(days=6)
+    thirty_day_start = today_start - timedelta(days=29)
+    trend_start = _hour_start(now) - timedelta(hours=23) if granularity == "hour" else thirty_day_start
+    trend_end = _hour_start(now) if granularity == "hour" else today_start
+    query_start = min(yesterday_start, seven_day_start, thirty_day_start, trend_start)
+    timelines = await _traffic_samples_by_proxy(session, proxy_ids, start=query_start, end=now)
+
+    today_upload, today_download = _usage_between(timelines, start=today_start, end=now)
+    yesterday_upload, yesterday_download = _usage_between(timelines, start=yesterday_start, end=today_start)
+    seven_upload, seven_download = _usage_between(timelines, start=seven_day_start, end=now)
+    thirty_upload, thirty_download = _usage_between(timelines, start=thirty_day_start, end=now)
+    peak_upload_speed, peak_download_speed = _peak_speed(timelines)
+    all_samples = [sample for samples in timelines.values() for sample in samples if (as_china(sample.sampled_at) or sample.sampled_at) >= query_start]
+    current_upload_total = sum(item.get("upload_total", 0) for item in stats.values())
+    current_download_total = sum(item.get("download_total", 0) for item in stats.values())
+    current_upload_speed = sum(item.get("upload_speed", 0) for item in stats.values())
+    current_download_speed = sum(item.get("download_speed", 0) for item in stats.values())
+    active_connections = sum(item.get("active_connections", 0) for item in stats.values())
+    source_ip_count = len(
+        {
+            source_ip
+            for item in stats.values()
+            for source_ip in item.get("source_ips", [])
+            if source_ip
+        }
+    )
+
+    return {
+        "scope": "proxy" if proxy is not None else "all",
+        "proxy_id": proxy.id if proxy is not None else None,
+        "proxy_name": proxy.name if proxy is not None else None,
+        "upload_total": current_upload_total,
+        "download_total": current_download_total,
+        "total": current_upload_total + current_download_total,
+        "current_upload_speed": current_upload_speed,
+        "current_download_speed": current_download_speed,
+        "peak_upload_speed": max(peak_upload_speed, current_upload_speed),
+        "peak_download_speed": max(peak_download_speed, current_download_speed),
+        "active_connections": active_connections,
+        "source_ip_count": source_ip_count,
+        "sample_count": len(all_samples),
+        "sampled_from": min((sample.sampled_at for sample in all_samples), default=None),
+        "sampled_to": max((sample.sampled_at for sample in all_samples), default=None),
+        "periods": [
+            _traffic_period("today", "今日", today_upload, today_download),
+            _traffic_period("yesterday", "昨日", yesterday_upload, yesterday_download),
+            _traffic_period("seven_days", "近 7 天", seven_upload, seven_download),
+            _traffic_period("thirty_days", "近 30 天", thirty_upload, thirty_download),
+        ],
+        "trend_granularity": granularity,
+        "trend": _traffic_trend(timelines, start=trend_start, end=trend_end, granularity=granularity),
+    }
 
 
 async def enforce_smart_proxy_access(
@@ -1984,6 +2422,458 @@ def add_smart_proxy_switch_log(
     if log is not None:
         session.add(log)
     return changed
+
+
+def _clamp_score(value: float) -> int:
+    return max(0, min(100, round(value)))
+
+
+def _grade_for_score(score: int | None) -> str:
+    if score is None:
+        return "暂无数据"
+    if score >= 90:
+        return "极稳"
+    if score >= 75:
+        return "稳定"
+    if score >= 60:
+        return "一般"
+    if score >= 40:
+        return "不稳定"
+    return "高风险"
+
+
+def _confidence_for_score(score: int) -> str:
+    if score >= 80:
+        return "高"
+    if score >= 40:
+        return "中"
+    return "低"
+
+
+def _sample_state(sample: SmartProxyStabilitySample) -> str:
+    if sample.status in {"proxy_unavailable", "core_unavailable", "failed", "stopped"}:
+        return "unavailable"
+    if not sample.core_available or not sample.listener_available:
+        return "unavailable"
+    if sample.runtime_nodes > 0 and sample.online_nodes <= 0:
+        return "unavailable"
+    if sample.status == "degraded" or not sample.state_synced:
+        return "degraded"
+    if sample.status in {"running", "ok", "online", "healthy", "configured"}:
+        return "available"
+    return "degraded"
+
+
+def _sample_state_label(state: str) -> str:
+    return {"available": "可用", "degraded": "降级", "unavailable": "不可用"}.get(state, "未知")
+
+
+def _seconds_text(seconds: int) -> str:
+    seconds = max(int(seconds), 0)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    if hours:
+        return f"{hours}小时{minutes}分钟"
+    return f"{minutes}分钟"
+
+
+def _percent_text(value: float) -> str:
+    return f"{max(0, min(100, value * 100)):.1f}%"
+
+
+def _rate_text(value: int | None) -> str:
+    if not value:
+        return "0 B/s"
+    units = ["B/s", "KB/s", "MB/s", "GB/s"]
+    size = float(value)
+    index = 0
+    while size >= 1024 and index < len(units) - 1:
+        size /= 1024
+        index += 1
+    return f"{size:.1f} {units[index]}" if index else f"{round(size)} {units[index]}"
+
+
+async def prune_smart_proxy_stability_samples(session: AsyncSession, *, keep_days: int | None = None) -> None:
+    retention_days = (
+        keep_days
+        if keep_days is not None
+        else await get_history_retention_days(session, HISTORY_RETENTION_SMART_PROXY_STABILITY_DAYS_KEY)
+    )
+    retention_days = max(int(retention_days or 0), 0)
+    if retention_days <= 0:
+        return
+    cutoff = now_china() - timedelta(days=retention_days)
+    await session.execute(delete(SmartProxyStabilitySample).where(SmartProxyStabilitySample.sampled_at < cutoff))
+
+
+def _stability_sample_from_status(
+    proxy: SmartProxy,
+    status: dict[str, Any],
+    *,
+    sampled_at: datetime,
+) -> SmartProxyStabilitySample:
+    mihomo_current_node = status.get("current_node")
+    current_node = proxy.current_node or mihomo_current_node
+    state_synced = not mihomo_current_node or mihomo_current_node == proxy.current_node
+    proxy_status = str(status.get("status") or proxy.status or "unknown")
+    return SmartProxyStabilitySample(
+        smart_proxy_id=proxy.id,
+        sampled_at=sampled_at,
+        status=proxy_status,
+        core_available=bool(status.get("core_available")),
+        listener_available=proxy_status != "proxy_unavailable",
+        state_synced=state_synced,
+        current_node=str(current_node) if current_node else None,
+        mihomo_current_node=str(mihomo_current_node) if mihomo_current_node else None,
+        candidate_nodes=_safe_int(status.get("candidate_nodes")),
+        runtime_nodes=_safe_int(status.get("runtime_nodes")),
+        online_nodes=_safe_int(status.get("online_nodes")),
+        failed_nodes=_safe_int(status.get("failed_nodes")),
+        delay=status.get("delay") if isinstance(status.get("delay"), int) else None,
+        average_delay=status.get("average_delay") if isinstance(status.get("average_delay"), int) else None,
+        upload_speed=_safe_int(status.get("upload_speed")),
+        download_speed=_safe_int(status.get("download_speed")),
+        active_connections=_safe_int(status.get("active_connections")),
+        switch_count=proxy.switch_count or 0,
+        traffic_excluded_nodes=_safe_int(status.get("traffic_excluded_nodes")),
+        traffic_risk_nodes=_safe_int(status.get("traffic_risk_nodes")),
+        traffic_unknown_nodes=_safe_int(status.get("traffic_unknown_nodes")),
+        error=str(status.get("error")) if status.get("error") else None,
+    )
+
+
+async def record_smart_proxy_stability_sample(
+    session: AsyncSession,
+    proxy: SmartProxy,
+    status: dict[str, Any],
+    *,
+    sampled_at: datetime | None = None,
+) -> None:
+    session.add(_stability_sample_from_status(proxy, status, sampled_at=sampled_at or now_china()))
+
+
+async def smart_proxy_stability_summary(
+    session: AsyncSession,
+    proxy: SmartProxy,
+    *,
+    window_hours: int = STABILITY_DEFAULT_WINDOW_HOURS,
+    include_samples: bool = False,
+) -> dict[str, Any]:
+    window_hours = max(1, min(int(window_hours or STABILITY_DEFAULT_WINDOW_HOURS), 168))
+    now = now_china()
+    window_start = now - timedelta(hours=window_hours)
+    interval_minutes = await get_smart_proxy_monitor_interval_minutes(session)
+    expected_interval = max(interval_minutes * 60, 60)
+    max_interval = max(expected_interval * 2, 300)
+    window_seconds = window_hours * 3600
+
+    previous = await session.scalar(
+        select(SmartProxyStabilitySample)
+        .where(
+            SmartProxyStabilitySample.smart_proxy_id == proxy.id,
+            SmartProxyStabilitySample.sampled_at < window_start,
+        )
+        .order_by(SmartProxyStabilitySample.sampled_at.desc(), SmartProxyStabilitySample.id.desc())
+        .limit(1)
+    )
+    samples = list(
+        (
+            await session.scalars(
+                select(SmartProxyStabilitySample)
+                .where(
+                    SmartProxyStabilitySample.smart_proxy_id == proxy.id,
+                    SmartProxyStabilitySample.sampled_at >= window_start,
+                    SmartProxyStabilitySample.sampled_at <= now,
+                )
+                .order_by(SmartProxyStabilitySample.sampled_at.asc(), SmartProxyStabilitySample.id.asc())
+            )
+        ).all()
+    )
+    timeline = ([previous] if previous is not None else []) + samples
+    if not timeline:
+        return {
+            "proxy_id": proxy.id,
+            "window_hours": window_hours,
+            "score": None,
+            "grade": "暂无数据",
+            "confidence": "低",
+            "confidence_score": 0,
+            "sample_count": 0,
+            "expected_samples": max(1, math.ceil(window_seconds / expected_interval)),
+            "coverage_ratio": 0,
+            "updated_at": None,
+            "metrics": [],
+            "samples": [],
+        }
+
+    available_seconds = 0
+    degraded_seconds = 0
+    unavailable_seconds = 0
+    observed_seconds = 0
+    unavailable_events = 0
+    longest_unavailable_seconds = 0
+    current_unavailable_seconds = 0
+    previous_state: str | None = None
+    interval_states: list[tuple[SmartProxyStabilitySample, str, int]] = []
+
+    for index, sample in enumerate(timeline):
+        interval_start = max(as_china(sample.sampled_at) or sample.sampled_at, window_start)
+        next_at = as_china(timeline[index + 1].sampled_at) if index + 1 < len(timeline) else now
+        if next_at is None:
+            next_at = now
+        interval_end = min(next_at, now)
+        raw_seconds = max(int((interval_end - interval_start).total_seconds()), 0)
+        seconds = min(raw_seconds, max_interval)
+        if seconds <= 0:
+            continue
+        state = _sample_state(sample)
+        interval_states.append((sample, state, seconds))
+        observed_seconds += seconds
+        if state == "available":
+            available_seconds += seconds
+        elif state == "unavailable":
+            unavailable_seconds += seconds
+            if previous_state != "unavailable":
+                unavailable_events += 1
+                current_unavailable_seconds = 0
+            current_unavailable_seconds += seconds
+            longest_unavailable_seconds = max(longest_unavailable_seconds, current_unavailable_seconds)
+        else:
+            degraded_seconds += seconds
+        if state != "unavailable":
+            current_unavailable_seconds = 0
+        previous_state = state
+
+    sample_count = len(samples)
+    expected_samples = max(1, math.ceil(window_seconds / expected_interval))
+    coverage_ratio = min(1.0, observed_seconds / window_seconds) if window_seconds else 0
+    availability_ratio = available_seconds / observed_seconds if observed_seconds else 0
+    confidence_score = _clamp_score(coverage_ratio * 100)
+    confidence = _confidence_for_score(confidence_score)
+
+    switch_logs = list(
+        (
+            await session.scalars(
+                select(SmartProxySwitchLog)
+                .where(
+                    SmartProxySwitchLog.smart_proxy_id == proxy.id,
+                    SmartProxySwitchLog.created_at >= window_start,
+                    SmartProxySwitchLog.created_at <= now,
+                )
+                .order_by(SmartProxySwitchLog.created_at.asc(), SmartProxySwitchLog.id.asc())
+            )
+        ).all()
+    )
+    switch_count = len(switch_logs)
+    switch_rate = switch_count / window_hours
+
+    delay_values = [
+        int(value)
+        for sample in samples
+        for value in [sample.delay if sample.delay is not None else sample.average_delay]
+        if value is not None and value >= 0
+    ]
+    average_delay = round(sum(delay_values) / len(delay_values)) if delay_values else None
+    p95_delay = None
+    delay_jitter = None
+    if delay_values:
+        sorted_delays = sorted(delay_values)
+        p95_index = min(len(sorted_delays) - 1, max(0, math.ceil(len(sorted_delays) * 0.95) - 1))
+        p95_delay = sorted_delays[p95_index]
+        if len(delay_values) > 1:
+            delay_jitter = round(sum(abs(value - average_delay) for value in delay_values) / len(delay_values))  # type: ignore[arg-type]
+        else:
+            delay_jitter = 0
+    timeout_samples = len([sample for sample in samples if sample.runtime_nodes > 0 and sample.online_nodes <= 0])
+
+    avg_upload = round(sum(sample.upload_speed for sample in samples) / sample_count) if sample_count else 0
+    avg_download = round(sum(sample.download_speed for sample in samples) / sample_count) if sample_count else 0
+    max_download = max([sample.download_speed for sample in samples], default=0)
+    active_ratio = len([sample for sample in samples if sample.active_connections > 0]) / sample_count if sample_count else 0
+    risk_events = len(
+        [
+            sample
+            for sample in samples
+            if sample.traffic_excluded_nodes > 0
+            or sample.traffic_risk_nodes > 0
+            or sample.traffic_unknown_nodes > 0
+            or not sample.state_synced
+            or sample.runtime_nodes <= 1
+        ]
+    )
+
+    availability_score = _clamp_score(
+        availability_ratio * 100 - min(15, (longest_unavailable_seconds / 600) * 2)
+    )
+    switch_score = _clamp_score(100 - min(100, switch_count * 12 + max(0, switch_rate - 0.25) * 40))
+    if delay_values:
+        delay_score = _clamp_score(
+            100
+            - min(35, max(0, (average_delay or 0) - 150) / 6)
+            - min(30, max(0, (p95_delay or 0) - 300) / 10)
+            - min(20, (delay_jitter or 0) / 20)
+            - min(30, (timeout_samples / max(sample_count, 1)) * 30)
+        )
+    else:
+        delay_score = 70
+    if active_ratio <= 0:
+        throughput_score = 80
+    else:
+        throughput_score = _clamp_score(75 + min(20, math.log(max(avg_upload + avg_download, 1), 2) * 1.5))
+    risk_ratio = risk_events / sample_count if sample_count else 0
+    avg_runtime_nodes = round(sum(sample.runtime_nodes for sample in samples) / sample_count, 2) if sample_count else 0
+    risk_score = _clamp_score(
+        100
+        - min(45, risk_ratio * 45)
+        - (15 if avg_runtime_nodes <= 1 and sample_count else 0)
+        - min(20, (degraded_seconds / max(observed_seconds, 1)) * 30)
+    )
+
+    score = _clamp_score(
+        availability_score * 0.4
+        + switch_score * 0.25
+        + delay_score * 0.2
+        + throughput_score * 0.1
+        + risk_score * 0.05
+    )
+
+    metrics = [
+        {
+            "key": "availability",
+            "label": "可用性",
+            "score": availability_score,
+            "weight": 40,
+            "value": _percent_text(availability_ratio),
+            "description": "代理在观察窗口内保持可用的时间占比，包含不可用时长与最长连续不可用。",
+            "details": [
+                f"可用时长 {_seconds_text(available_seconds)}",
+                f"不可用时长 {_seconds_text(unavailable_seconds)}",
+                f"降级时长 {_seconds_text(degraded_seconds)}",
+                f"最长连续不可用 {_seconds_text(longest_unavailable_seconds)}",
+                f"不可用次数 {unavailable_events} 次",
+            ],
+        },
+        {
+            "key": "switching",
+            "label": "切换稳定性",
+            "score": switch_score,
+            "weight": 25,
+            "value": f"{switch_count} 次",
+            "description": "统计窗口内节点切换次数和切换频率，频繁切换会降低稳定性。",
+            "details": [f"切换频率 {switch_rate:.2f} 次/小时"],
+        },
+        {
+            "key": "delay",
+            "label": "延迟质量",
+            "score": delay_score,
+            "weight": 20,
+            "value": f"{average_delay} ms" if average_delay is not None else "暂无延迟样本",
+            "description": "综合平均延迟、P95 延迟、延迟抖动和超时样本。",
+            "details": [
+                f"P95 延迟 {p95_delay} ms" if p95_delay is not None else "P95 延迟暂无数据",
+                f"延迟抖动 {delay_jitter} ms" if delay_jitter is not None else "延迟抖动暂无数据",
+                f"超时样本 {timeout_samples} 个",
+            ],
+        },
+        {
+            "key": "throughput",
+            "label": "连接与速率",
+            "score": throughput_score,
+            "weight": 10,
+            "value": _rate_text(avg_upload + avg_download),
+            "description": "基于真实经过代理的连接和上下行速率，不主动做大流量测速。",
+            "details": [
+                f"活跃连接样本占比 {_percent_text(active_ratio)}",
+                f"平均上传 {_rate_text(avg_upload)}",
+                f"平均下载 {_rate_text(avg_download)}",
+                f"峰值下载 {_rate_text(max_download)}",
+            ],
+        },
+        {
+            "key": "risk",
+            "label": "风险扣分",
+            "score": risk_score,
+            "weight": 5,
+            "value": f"{risk_events} 个样本",
+            "description": "流量风险、候选节点过少、状态未同步等风险会扣分。",
+            "details": [
+                f"风险样本占比 {_percent_text(risk_ratio)}",
+                f"平均运行节点 {avg_runtime_nodes}",
+            ],
+        },
+    ]
+
+    display_samples = []
+    if include_samples:
+        for sample in reversed(samples[-120:]):
+            state = _sample_state(sample)
+            display_samples.append(
+                {
+                    "sampled_at": sample.sampled_at,
+                    "status": sample.status,
+                    "state": _sample_state_label(state),
+                    "current_node": sample.current_node,
+                    "online_nodes": sample.online_nodes,
+                    "runtime_nodes": sample.runtime_nodes,
+                    "delay": sample.delay,
+                    "average_delay": sample.average_delay,
+                    "upload_speed": sample.upload_speed,
+                    "download_speed": sample.download_speed,
+                    "active_connections": sample.active_connections,
+                    "error": sample.error,
+                }
+            )
+
+    return {
+        "proxy_id": proxy.id,
+        "window_hours": window_hours,
+        "score": score,
+        "grade": _grade_for_score(score),
+        "confidence": confidence,
+        "confidence_score": confidence_score,
+        "sample_count": sample_count,
+        "expected_samples": expected_samples,
+        "coverage_ratio": round(coverage_ratio, 4),
+        "observed_seconds": observed_seconds,
+        "available_seconds": available_seconds,
+        "degraded_seconds": degraded_seconds,
+        "unavailable_seconds": unavailable_seconds,
+        "availability_ratio": round(availability_ratio, 4),
+        "longest_unavailable_seconds": longest_unavailable_seconds,
+        "unavailable_events": unavailable_events,
+        "switch_count": switch_count,
+        "switch_rate_per_hour": round(switch_rate, 3),
+        "average_delay": average_delay,
+        "p95_delay": p95_delay,
+        "delay_jitter": delay_jitter,
+        "timeout_samples": timeout_samples,
+        "average_upload_speed": avg_upload,
+        "average_download_speed": avg_download,
+        "max_download_speed": max_download,
+        "active_connection_sample_ratio": round(active_ratio, 4),
+        "risk_events": risk_events,
+        "sampled_from": samples[0].sampled_at if samples else None,
+        "sampled_to": samples[-1].sampled_at if samples else None,
+        "updated_at": samples[-1].sampled_at if samples else None,
+        "metrics": metrics,
+        "samples": display_samples,
+    }
+
+
+async def smart_proxy_stability_overview(
+    session: AsyncSession,
+    proxy: SmartProxy,
+    *,
+    window_hours: int = STABILITY_DEFAULT_WINDOW_HOURS,
+) -> dict[str, Any]:
+    summary = await smart_proxy_stability_summary(session, proxy, window_hours=window_hours, include_samples=False)
+    return {
+        "stability_score": summary.get("score"),
+        "stability_grade": summary.get("grade") or "暂无数据",
+        "stability_confidence": summary.get("confidence") or "低",
+        "stability_window_hours": summary.get("window_hours") or window_hours,
+        "stability_updated_at": summary.get("updated_at"),
+    }
 
 
 def _parse_monitor_sync_at(value: str | None) -> datetime | None:
@@ -2549,19 +3439,22 @@ async def check_smart_proxy_health(
     return result
 
 
-async def prune_smart_proxy_health_logs(session: AsyncSession, proxy_id: int, *, keep: int = 1000) -> None:
-    ids = list(
-        (
-            await session.scalars(
-                select(SmartProxyHealthLog.id)
-                .where(SmartProxyHealthLog.smart_proxy_id == proxy_id)
-                .order_by(SmartProxyHealthLog.id.desc())
-                .offset(keep)
-            )
-        ).all()
+async def prune_smart_proxy_health_logs(session: AsyncSession, proxy_id: int, *, keep_days: int | None = None) -> None:
+    retention_days = (
+        keep_days
+        if keep_days is not None
+        else await get_history_retention_days(session, HISTORY_RETENTION_SMART_PROXY_HEALTH_LOG_DAYS_KEY)
     )
-    if ids:
-        await session.execute(delete(SmartProxyHealthLog).where(SmartProxyHealthLog.id.in_(ids)))
+    retention_days = max(int(retention_days or 0), 0)
+    if retention_days <= 0:
+        return
+    cutoff = now_china() - timedelta(days=retention_days)
+    await session.execute(
+        delete(SmartProxyHealthLog).where(
+            SmartProxyHealthLog.smart_proxy_id == proxy_id,
+            SmartProxyHealthLog.created_at < cutoff,
+        )
+    )
 
 
 async def refresh_smart_proxy_statuses(session: AsyncSession) -> dict[str, Any]:
@@ -2569,6 +3462,7 @@ async def refresh_smart_proxy_statuses(session: AsyncSession) -> dict[str, Any]:
     stable_changed: list[SmartProxy] = []
     status_changes = 0
     current_node_changes = 0
+    sampled_at = now_china()
     for proxy in proxies:
         previous_status = proxy.status
         previous_error = proxy.last_error
@@ -2588,6 +3482,8 @@ async def refresh_smart_proxy_statuses(session: AsyncSession) -> dict[str, Any]:
             current_node_changes += 1
         if changed and smart_proxy_stability_priority_enabled(proxy):
             stable_changed.append(proxy)
+        await record_smart_proxy_stability_sample(session, proxy, status, sampled_at=sampled_at)
+    await prune_smart_proxy_stability_samples(session)
     await session.commit()
     if stable_changed:
         await apply_stability_priority_runtime(session, stable_changed)

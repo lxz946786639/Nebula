@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, SessionDep
@@ -19,9 +19,10 @@ from app.schemas.ant_proxy import (
     AntProxyStatus,
     AntProxyTestRequest,
     AntProxyTestResult,
+    AntProxyTrafficSummary,
 )
 from app.services.audit import write_audit
-from app.services.ant_proxy import DEFAULT_ANT_LISTEN_PORT, AntProxyError, ant_proxy_service
+from app.services.ant_proxy import DEFAULT_ANT_LISTEN_PORT, AntProxyError, ant_proxy_service, ant_proxy_traffic_summary
 from app.services.settings import get_ant_proxy_auto_refresh_enabled, get_ant_proxy_auto_refresh_interval_minutes
 from app.services.smart_proxy import (
     SmartProxyError,
@@ -60,7 +61,7 @@ async def _schedule_config(session: SessionDep) -> AntProxyScheduleConfig:
 
 
 async def _status(session: SessionDep) -> AntProxyStatus:
-    await ant_proxy_service.persist_traffic_totals(session)
+    await ant_proxy_service.record_traffic_sample_if_due(session)
     return AntProxyStatus.model_validate(ant_proxy_service.status())
 
 
@@ -104,6 +105,15 @@ async def status(current_user: CurrentUser, session: SessionDep) -> AntProxyStat
 @router.get("/schedule", response_model=AntProxyScheduleConfig)
 async def schedule_config(current_user: CurrentUser, session: SessionDep) -> AntProxyScheduleConfig:
     return await _schedule_config(session)
+
+
+@router.get("/traffic", response_model=AntProxyTrafficSummary)
+async def traffic_summary(
+    current_user: CurrentUser,
+    session: SessionDep,
+    granularity: str = Query(default="hour", pattern="^(hour|day)$"),
+) -> AntProxyTrafficSummary:
+    return AntProxyTrafficSummary(**await ant_proxy_traffic_summary(session, granularity=granularity))
 
 
 @router.put("/schedule", response_model=AntProxyScheduleConfig)
