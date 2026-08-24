@@ -186,8 +186,15 @@ async def prune_traffic_snapshots(session: AsyncSession, *, keep_days: int | Non
     retention_days = max(int(retention_days or 0), 0)
     if retention_days <= 0:
         return
-    cutoff = now_china() - timedelta(days=retention_days)
-    await session.execute(delete(TrafficSnapshot).where(TrafficSnapshot.created_at < cutoff))
+    # SQLite 存储/读回的 datetime 均无时区信息（naive 中国时间），
+    # cutoff 保持 naive 以与存储格式一致；删除跳过会话内 evaluate，避免
+    # naive/aware 比较在 ORM 同步阶段抛 TypeError。
+    cutoff = now_china().replace(tzinfo=None) - timedelta(days=retention_days)
+    await session.execute(
+        delete(TrafficSnapshot)
+        .where(TrafficSnapshot.created_at < cutoff)
+        .execution_options(synchronize_session=False)
+    )
 
 
 async def poll_traffic_snapshot(session: AsyncSession) -> TrafficSnapshot:

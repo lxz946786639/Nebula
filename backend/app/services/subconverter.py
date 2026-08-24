@@ -47,6 +47,9 @@ class SubconverterClient:
             raise SubconverterError("No enabled subscriptions found")
 
         timeout = aiohttp.ClientTimeout(total=self.settings.SUBCONVERTER_TIMEOUT_SECONDS)
+        # subconverter v0.9 会把调用方请求的 User-Agent 透传给机场抓取请求；
+        # 部分机场 WAF 只放行代理客户端 UA（Clash 系），默认 aiohttp UA 会被 403 拦截。
+        headers = {"User-Agent": "ClashforWindows/0.20.39"}
         params: dict[str, str] = {
             "target": request.target,
             "url": "|".join(request.urls),
@@ -58,7 +61,7 @@ class SubconverterClient:
         request_url = URL(f"{self.base_url}/sub?{build_subconverter_query(params)}", encoded=True)
 
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
                 async with session.get(request_url) as response:
                     body = await response.text()
                     if response.status >= 400:

@@ -108,8 +108,12 @@ async def prune_node_snapshots(session: AsyncSession, *, keep_days: int | None =
     retention_days = max(int(retention_days or 0), 0)
     if retention_days <= 0:
         return
-    cutoff = now_china() - timedelta(days=retention_days)
-    await session.execute(delete(NodeSnapshot).where(NodeSnapshot.created_at < cutoff))
+    cutoff = now_china().replace(tzinfo=None) - timedelta(days=retention_days)
+    await session.execute(
+        delete(NodeSnapshot)
+        .where(NodeSnapshot.created_at < cutoff)
+        .execution_options(synchronize_session=False)
+    )
 
 
 async def refresh_subscription_source(

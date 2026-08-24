@@ -126,7 +126,8 @@ async def cleanup_history_data(
     actor: str = "system",
     write_log: bool = False,
 ) -> dict[str, Any]:
-    now = now_china()
+    # SQLite 存储/读回的 datetime 均无时区信息（naive 中国时间），cutoff 保持 naive 以与存储格式一致。
+    now = now_china().replace(tzinfo=None)
     retention_by_target: dict[str, int] = {}
     cutoffs: dict[str, datetime] = {}
     deleted: dict[str, int] = {}
@@ -142,7 +143,11 @@ async def cleanup_history_data(
             continue
         cutoff = now - timedelta(days=days)
         cutoffs[target.key] = cutoff
-        result = await session.execute(delete(target.model).where(target.timestamp_column < cutoff))
+        result = await session.execute(
+            delete(target.model)
+            .where(target.timestamp_column < cutoff)
+            .execution_options(synchronize_session=False)
+        )
         deleted[target.key] = _deleted_count(result.rowcount)
 
     total_deleted = sum(deleted.values())

@@ -3448,12 +3448,14 @@ async def prune_smart_proxy_health_logs(session: AsyncSession, proxy_id: int, *,
     retention_days = max(int(retention_days or 0), 0)
     if retention_days <= 0:
         return
-    cutoff = now_china() - timedelta(days=retention_days)
+    cutoff = now_china().replace(tzinfo=None) - timedelta(days=retention_days)
     await session.execute(
-        delete(SmartProxyHealthLog).where(
+        delete(SmartProxyHealthLog)
+        .where(
             SmartProxyHealthLog.smart_proxy_id == proxy_id,
             SmartProxyHealthLog.created_at < cutoff,
         )
+        .execution_options(synchronize_session=False)
     )
 
 
