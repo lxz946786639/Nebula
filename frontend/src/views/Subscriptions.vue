@@ -8,8 +8,8 @@
         <el-button type="primary" :icon="Plus" @click="openCreate">新增订阅</el-button>
       </div>
     </div>
-    <div class="table-wrap has-cards desktop-table">
-      <el-table class="list-table" :data="items" stripe height="100%">
+    <div v-loading="trafficRefreshing" element-loading-text="正在刷新流量…" class="table-wrap has-cards desktop-table">
+      <el-table class="list-table" :data="items" stripe height="100%" :row-class-name="rowClassName">
       <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
       <el-table-column prop="group_name" label="分组" width="120" />
       <el-table-column prop="priority" label="优先级" width="90" />
@@ -20,7 +20,11 @@
       </el-table-column>
       <el-table-column label="更新状态" width="130">
         <template #default="{ row }">
-          <el-tooltip v-if="row.last_error" :content="row.last_error" placement="top">
+          <el-tag v-if="isRefreshing(row.id)" type="warning" effect="plain" class="syncing-tag">
+            <el-icon class="spin-icon"><Refresh /></el-icon>
+            同步中…
+          </el-tag>
+          <el-tooltip v-else-if="row.last_error" :content="row.last_error" placement="top">
             <el-tag :type="statusTag(row.last_status)">{{ statusText(row.last_status) }}</el-tag>
           </el-tooltip>
           <el-tag v-else :type="statusTag(row.last_status)">{{ statusText(row.last_status) }}</el-tag>
@@ -51,7 +55,7 @@
       <el-table-column label="操作" width="146" fixed="right" class-name="table-cell-actions" header-class-name="table-cell-actions">
         <template #default="{ row }">
           <div class="table-action-icons">
-            <el-button :icon="Refresh" circle title="刷新订阅" @click="refresh(row.id)" />
+            <el-button :icon="Refresh" circle title="刷新订阅" :loading="isRefreshing(row.id)" @click="refresh(row)" />
             <el-button :icon="Edit" circle title="编辑订阅" @click="openEdit(row)" />
             <el-button :icon="Delete" circle title="删除订阅" type="danger" @click="remove(row.id)" />
           </div>
@@ -59,7 +63,7 @@
       </el-table-column>
       </el-table>
     </div>
-    <div class="mobile-card-list data-cards">
+    <div v-loading="trafficRefreshing" element-loading-text="正在刷新流量…" class="mobile-card-list data-cards">
       <el-empty v-if="!items.length" description="暂无订阅" :image-size="72" />
       <article v-for="row in items" v-else :key="row.id" class="mobile-card">
         <div class="mobile-card-head">
@@ -71,7 +75,11 @@
         </div>
         <div class="mobile-card-meta">
           <span>更新</span>
-          <el-tooltip v-if="row.last_error" :content="row.last_error" placement="top">
+          <el-tag v-if="isRefreshing(row.id)" size="small" type="warning" effect="plain" class="syncing-tag">
+            <el-icon class="spin-icon"><Refresh /></el-icon>
+            同步中…
+          </el-tag>
+          <el-tooltip v-else-if="row.last_error" :content="row.last_error" placement="top">
             <el-tag size="small" :type="statusTag(row.last_status)">{{ statusText(row.last_status) }}</el-tag>
           </el-tooltip>
           <el-tag v-else size="small" :type="statusTag(row.last_status)">{{ statusText(row.last_status) }}</el-tag>
@@ -101,7 +109,7 @@
           </div>
         </dl>
         <div class="mobile-card-actions">
-          <el-button :icon="Refresh" @click="refresh(row.id)">刷新</el-button>
+          <el-button :icon="Refresh" :loading="isRefreshing(row.id)" @click="refresh(row)">刷新</el-button>
           <el-button :icon="Edit" @click="openEdit(row)">编辑</el-button>
           <el-button :icon="Delete" type="danger" @click="remove(row.id)">删除</el-button>
         </div>
@@ -207,6 +215,7 @@ const subscriptionSettings = ref<SettingItem[]>([])
 const subscriptionValues = reactive<Record<string, string | null>>({})
 const group = ref('')
 const trafficRefreshing = ref(false)
+const refreshingIds = ref(new Set<number>())
 const settingsLoading = ref(false)
 const settingsSaving = ref(false)
 const settingsDialogVisible = ref(false)
@@ -305,10 +314,51 @@ async function save() {
   reloadSoon()
 }
 
-async function refresh(id: number) {
-  await http.post(`/subscriptions/${id}/refresh`)
-  ElMessage.success('刷新完成')
-  await load()
+function isRefreshing(id: number) {
+  return refreshingIds.value.has(id)
+}
+
+function rowClassName({ row }: { row: Subscription; rowIndex: number }) {
+  return isRefreshing(row.id) ? 'row-refreshing' : ''
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function refreshScopeMessage(name: string) {
+  const safeName = escapeHtml(name)
+  return [
+    '<p>将重新拉取「' + safeName + '」的最新订阅并同步节点池，影响范围：</p>',
+    '<ul>',
+    '<li>该订阅的节点全量同步：新节点加入、已有节点更新、机场已下线的节点移除</li>',
+    '<li>手动停用的节点会被重新启用，已测的延迟值会清空</li>',
+    '<li>不影响其他订阅，也不刷新流量数据</li>',
+    '</ul>',
+  ].join('')
+}
+
+async function refresh(row: Subscription) {
+  try {
+    await ElMessageBox.confirm(refreshScopeMessage(row.name), '刷新订阅', {
+      confirmButtonText: '确认刷新',
+      cancelButtonText: '取消',
+      type: 'warning',
+      dangerouslyUseHTMLString: true,
+    })
+  } catch {
+    return
+  }
+  refreshingIds.value.add(row.id)
+  try {
+    await http.post(`/subscriptions/${row.id}/refresh`)
+    ElMessage.success(`订阅「${row.name}」刷新完成`)
+    await load()
+  } catch {
+    // 错误提示由 http 拦截器统一处理
+  } finally {
+    refreshingIds.value.delete(row.id)
+  }
 }
 
 async function refreshTraffic() {
@@ -319,6 +369,8 @@ async function refreshTraffic() {
     const unavailable = items.value.filter((item) => item.traffic_error).length
     if (unavailable) ElMessage.warning(`流量刷新完成，${unavailable} 个订阅异常，已保留上次可用流量`)
     else ElMessage.success('流量刷新完成')
+  } catch {
+    // 错误提示由 http 拦截器统一处理
   } finally {
     trafficRefreshing.value = false
   }

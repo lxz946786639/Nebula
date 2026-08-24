@@ -1410,6 +1410,18 @@ h1 {
   overflow: auto;
 }
 
+/* 刷新订阅确认弹窗：影响范围列表 */
+.el-message-box__message p {
+  margin: 0;
+}
+
+.el-message-box__message ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  line-height: 1.75;
+  color: var(--muted);
+}
+
 .el-form-item__label {
   color: var(--text);
   font-size: 13px;
@@ -1680,6 +1692,50 @@ small {
 
 .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
   background: var(--table-stripe);
+}
+
+/* 订阅行刷新中：整行统一高亮 + 连续扫光（背景放在 tr 上，跨所有单元格一条动效） */
+.list-table .el-table__body tr.el-table__row.row-refreshing {
+  background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+  background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 14%, transparent), transparent);
+  background-size: 220% 100%;
+  animation: warm-shimmer 1.6s ease-in-out infinite;
+  transition: background-color 0.35s ease;
+}
+
+/* 常规单元格透明，露出 tr 的整行背景 */
+.list-table .el-table__body tr.el-table__row.row-refreshing > td.el-table__cell {
+  background-color: transparent;
+  transition: background-color 0.35s ease;
+}
+
+/* 固定列需要不透明底色，防止横向滚动时透出下方内容 */
+.list-table .el-table__body tr.el-table__row.row-refreshing > td.el-table__cell.el-table-fixed-column--left,
+.list-table .el-table__body tr.el-table__row.row-refreshing > td.el-table__cell.el-table-fixed-column--right {
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-2));
+}
+
+.list-table .el-table__body tr.el-table__row--striped.row-refreshing > td.el-table__cell.el-table-fixed-column--left,
+.list-table .el-table__body tr.el-table__row--striped.row-refreshing > td.el-table__cell.el-table-fixed-column--right {
+  background: color-mix(in srgb, var(--accent) 7%, var(--table-stripe));
+}
+
+.syncing-tag {
+  gap: 4px;
+}
+
+.spin-icon {
+  animation: sync-spin 0.9s linear infinite;
+}
+
+@keyframes sync-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .el-table__inner-wrapper::before {

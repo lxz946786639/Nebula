@@ -13,12 +13,12 @@
       </div>
       <div class="toolbar-actions">
         <el-button :icon="Setting" :loading="settingsLoading" @click="openNodeSettings">节点池配置</el-button>
-        <el-button :icon="Refresh" @click="load">重新加载</el-button>
+        <el-button :icon="Refresh" :loading="reloading" @click="reload">重新加载</el-button>
         <el-button :icon="Connection" :loading="testing" @click="testLatency">一键测速</el-button>
         <el-button type="primary" :icon="Refresh" :loading="syncing" @click="refreshPool">同步节点池</el-button>
       </div>
     </div>
-    <div class="table-wrap has-cards desktop-table">
+    <div v-loading="reloading" element-loading-text="正在重新加载…" class="table-wrap has-cards desktop-table">
       <el-table class="list-table" :data="nodes" stripe height="100%" empty-text="暂无节点，点击同步节点池">
       <el-table-column label="启用" width="86">
         <template #default="{ row }">
@@ -67,7 +67,7 @@
       </el-table-column>
       </el-table>
     </div>
-    <div class="mobile-card-list data-cards">
+    <div v-loading="reloading" element-loading-text="正在重新加载…" class="mobile-card-list data-cards">
       <el-empty v-if="!nodes.length" description="暂无节点，点击同步节点池" :image-size="72" />
       <article v-for="row in nodes" v-else :key="row.id" class="mobile-card">
         <div class="mobile-card-head">
@@ -175,6 +175,7 @@ const country = ref('')
 const group = ref('')
 const enabledFilter = ref('')
 const syncing = ref(false)
+const reloading = ref(false)
 const testing = ref(false)
 const settingsLoading = ref(false)
 const settingsSaving = ref(false)
@@ -192,6 +193,18 @@ async function load() {
     },
   })
   nodes.value = data.items
+}
+
+async function reload() {
+  reloading.value = true
+  try {
+    await load()
+    ElMessage.success('节点列表已重新加载')
+  } catch {
+    // 错误提示由 http 拦截器统一处理
+  } finally {
+    reloading.value = false
+  }
 }
 
 async function loadNodeSettings() {
