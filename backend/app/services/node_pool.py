@@ -288,10 +288,34 @@ async def _sync_node_pool_unlocked(
     for subscription in subscriptions:
         try:
             await validate_subscription_url(subscription.url)
-            converted = await client.convert(
-                ConvertRequest(target="clash", urls=[subscription.url], config_url=None, emoji=emoji)
-            )
-            proxies = extract_clash_proxies(converted)
+            proxies: list[dict[str, Any]] = []
+            convert_error: SubconverterError | None = None
+            try:
+                converted = await client.convert(
+                    ConvertRequest(target="clash", urls=[subscription.url], config_url=None, emoji=emoji)
+                )
+                proxies = extract_clash_proxies(converted)
+            except SubconverterError as exc:
+                # subconverter 抓取失败（多为机场 WAF 拦截）时，先记下来继续尝试原文抓取。
+                convert_error = exc
+            # 原始订阅解析兜底：tindy2013/subconverter（C++ v0.9）无法解析 Clash YAML
+            # 中的 vless 等节点类型会直接丢弃，这里用同一组 UA 回退抓取订阅原文补全
+            # 缺失节点；subconverter 整体失败时原文抓取是唯一来源（非 Clash 格式订阅
+            # 没有 proxies 字段，天然不产生影响）。
+            try:
+                raw_text = await client.fetch_raw(subscription.url)
+                raw_proxies = extract_clash_proxies(raw_text)
+            except SubconverterError as exc:
+                logger.info("订阅 %s 原文抓取失败：%s", subscription.name, exc)
+                raw_proxies = []
+            known_identities = {node_identity(item) for item in proxies}
+            for item in raw_proxies:
+                identity = node_identity(item)
+                if identity not in known_identities:
+                    proxies.append(item)
+                    known_identities.add(identity)
+            if not proxies and convert_error is not None:
+                raise convert_error
             for raw in proxies:
                 if _is_filtered_node(raw, filter_patterns):
                     result.filtered_nodes += 1

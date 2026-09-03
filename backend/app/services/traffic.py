@@ -10,6 +10,7 @@ from app.core.timezone import CHINA_TZ, now_china
 from app.models.subscription import Subscription
 from app.models.traffic_snapshot import TrafficSnapshot
 from app.services.settings import HISTORY_RETENTION_SUBSCRIPTION_TRAFFIC_DAYS_KEY, get_history_retention_days
+from app.services.subconverter import SUBSCRIPTION_UA_CANDIDATES
 from app.utils.network import validate_subscription_url
 
 
@@ -54,6 +55,42 @@ def parse_subscription_userinfo(value: str | None) -> tuple[int, int, int, str |
     return upload, download, total, expire_at
 
 
+async def _fetch_userinfo_once(
+    session: aiohttp.ClientSession,
+    *,
+    url: str,
+    ua: str,
+) -> tuple[SubscriptionTraffic | None, bool]:
+    """用指定 UA 抓取一次 subscription-userinfo。
+
+    返回 (result, retriable)：result 非 None 表示拿到最终结果（成功或不可重试的错误）；
+    retriable=True 表示疑似被机场 WAF 拦截（4xx / 连接异常），可换 UA 重试。
+    """
+    try:
+        async with session.get(url, headers={"User-Agent": ua}) as response:
+            if response.status >= 400:
+                body = (await response.text())[:200]
+                detail = f"subscription returned HTTP {response.status}"
+                if body.strip():
+                    detail = f"{detail}: {body.strip()}"
+                return None, True
+            header = response.headers.get("subscription-userinfo")
+            response.release()
+            upload, download, total, expire_at = parse_subscription_userinfo(header)
+            if total <= 0:
+                return SubscriptionTraffic(
+                    subscription_id=-1, name="", available=False,
+                    error="subscription-userinfo header not found",
+                ), False
+            return SubscriptionTraffic(
+                subscription_id=-1, name="",
+                upload=upload, download=download, total=total, expire_at=expire_at, available=True,
+            ), False
+    except Exception as exc:
+        message = str(exc) or exc.__class__.__name__
+        return None, True
+
+
 async def fetch_subscription_traffic(
     session: aiohttp.ClientSession,
     *,
@@ -63,41 +100,40 @@ async def fetch_subscription_traffic(
 ) -> SubscriptionTraffic:
     try:
         await validate_subscription_url(url)
-        async with session.get(url) as response:
-            header = response.headers.get("subscription-userinfo")
-            if response.status >= 400:
-                body = (await response.text())[:200]
-                detail = f"subscription returned HTTP {response.status}"
-                if body.strip():
-                    detail = f"{detail}: {body.strip()}"
-                return SubscriptionTraffic(subscription_id=subscription_id, name=name, available=False, error=detail)
-            response.release()
-            upload, download, total, expire_at = parse_subscription_userinfo(header)
-            if total <= 0:
-                return SubscriptionTraffic(
-                    subscription_id=subscription_id,
-                    name=name,
-                    available=False,
-                    error="subscription-userinfo header not found",
-                )
-            return SubscriptionTraffic(
-                subscription_id=subscription_id,
-                name=name,
-                upload=upload,
-                download=download,
-                total=total,
-                expire_at=expire_at,
-                available=True,
-            )
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
         return SubscriptionTraffic(subscription_id=subscription_id, name=name, available=False, error=message)
 
+    # 机场 WAF 对 UA 的放行策略会波动，单个 UA 可能被 403/reset；
+    # 依次尝试多个 Clash 系 UA，任一成功即返回。
+    last_error: str | None = None
+    for ua in SUBSCRIPTION_UA_CANDIDATES:
+        result, retriable = await _fetch_userinfo_once(session, url=url, ua=ua)
+        if result is not None:
+            return SubscriptionTraffic(
+                subscription_id=subscription_id,
+                name=name,
+                upload=result.upload,
+                download=result.download,
+                total=result.total,
+                expire_at=result.expire_at,
+                available=result.available,
+                error=result.error,
+            )
+        if not retriable:
+            break
+        last_error = f"UA {ua} blocked"
+    return SubscriptionTraffic(
+        subscription_id=subscription_id, name=name, available=False,
+        error=last_error or "unknown error",
+    )
+
 
 async def collect_traffic(subscriptions: list) -> list[SubscriptionTraffic]:
     timeout = aiohttp.ClientTimeout(total=20)
-    headers = {"User-Agent": "ClashforWindows/0.20.39"}
-    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+    # User-Agent 在 fetch_subscription_traffic 内按候选列表逐次覆盖，
+    # 这里不再固定单一 UA，避免被机场 WAF 拦截后无回退。
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         tasks = [
             fetch_subscription_traffic(
                 session,
